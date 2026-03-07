@@ -1,4 +1,6 @@
 <script setup>
+import { reactive, ref } from 'vue';
+
 const props = defineProps({
   currentListId: {
     type: Number,
@@ -23,17 +25,47 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['select-list', 'create-list', 'delete-list', 'select-workspace']);
+const modalMode = ref('');
+const createForm = reactive({
+  name: '',
+  type: 'task'
+});
+const deleteTarget = ref(null);
+const modalError = ref('');
 
 function handleCreateList() {
-  const name = window.prompt('Name the new list');
-  if (!name || !name.trim()) return;
-  emit('create-list', name.trim());
+  modalMode.value = 'create';
+  createForm.name = '';
+  createForm.type = 'task';
+  modalError.value = '';
 }
 
 function handleDeleteList(list) {
-  const confirmed = window.confirm(`Delete the list "${list.name}" and all of its tasks?`);
-  if (!confirmed) return;
-  emit('delete-list', list.id);
+  deleteTarget.value = list;
+  modalMode.value = 'delete';
+  modalError.value = '';
+}
+
+function closeModal() {
+  modalMode.value = '';
+  deleteTarget.value = null;
+  modalError.value = '';
+}
+
+function submitCreateList() {
+  if (!createForm.name.trim()) {
+    modalError.value = 'List name is required.';
+    return;
+  }
+
+  emit('create-list', { name: createForm.name.trim(), type: createForm.type });
+  closeModal();
+}
+
+function confirmDeleteList() {
+  if (!deleteTarget.value) return;
+  emit('delete-list', deleteTarget.value.id);
+  closeModal();
 }
 </script>
 
@@ -69,14 +101,66 @@ function handleDeleteList(list) {
         <button class="list-card-main" @click="emit('select-list', list.id)">
           <span>
             <strong>{{ list.name }}</strong>
-            <small>{{ list.taskCount }} tasks</small>
+            <small>{{ list.taskCount }} {{ list.type === 'grocery' ? 'items' : 'tasks' }}</small>
           </span>
         </button>
         <span class="list-card-actions">
+          <small class="list-type-chip">{{ list.type }}</small>
           <small>{{ list.openCount }} open</small>
           <button class="icon-button" title="Delete list" @click.stop="handleDeleteList(list)">×</button>
         </span>
       </article>
     </div>
   </aside>
+
+  <div v-if="modalMode" class="modal-backdrop" @click.self="closeModal">
+    <section class="panel action-modal">
+      <template v-if="modalMode === 'create'">
+        <div>
+          <p class="eyebrow">New list</p>
+          <h2>Create a list</h2>
+          <p class="subtle">Choose the list name and type. Grocery lists use quantity instead of task priority and due date.</p>
+        </div>
+
+        <div class="modal-form">
+          <input v-model="createForm.name" type="text" placeholder="List name" :disabled="pending" />
+          <div class="type-radio-group">
+            <label class="type-radio">
+              <input v-model="createForm.type" type="radio" value="task" :disabled="pending" />
+              <span>
+                <strong>Task list</strong>
+                <small>Use due dates and priority.</small>
+              </span>
+            </label>
+            <label class="type-radio">
+              <input v-model="createForm.type" type="radio" value="grocery" :disabled="pending" />
+              <span>
+                <strong>Grocery list</strong>
+                <small>Use quantity and shopping notes.</small>
+              </span>
+            </label>
+          </div>
+          <p v-if="modalError" class="form-error">{{ modalError }}</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+          <button class="ghost-button" type="button" :disabled="pending" @click="submitCreateList">Create list</button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'delete'">
+        <div>
+          <p class="eyebrow">Delete list</p>
+          <h2>Delete {{ deleteTarget?.name }}?</h2>
+          <p class="subtle">This removes the list and all of its items.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmDeleteList">Delete list</button>
+        </div>
+      </template>
+    </section>
+  </div>
 </template>

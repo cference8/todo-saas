@@ -6,6 +6,7 @@ import { hashPassword, verifyPassword } from './auth.js';
 const connectionString = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/todo_saas';
 const pool = new Pool({ connectionString });
 const INVITE_TTL_DAYS = 7;
+const LIST_TYPES = new Set(['task', 'grocery']);
 
 function fmt(value) {
   return value ? new Date(value).toLocaleString() : null;
@@ -50,6 +51,7 @@ export async function initDb() {
       id BIGSERIAL PRIMARY KEY,
       workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'task',
       created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -60,6 +62,7 @@ export async function initDb() {
       list_id BIGINT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
+      quantity TEXT NOT NULL DEFAULT '',
       due_date DATE,
       priority TEXT NOT NULL DEFAULT 'medium',
       completed_at TIMESTAMPTZ,
@@ -75,9 +78,12 @@ export async function initDb() {
   `);
 
   await pool.query(`
+    ALTER TABLE lists ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'task';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS quantity TEXT NOT NULL DEFAULT '';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date DATE;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium';
+    UPDATE lists SET type = 'task' WHERE type IS NULL OR type NOT IN ('task', 'grocery');
     UPDATE tasks SET priority = 'medium' WHERE priority IS NULL OR priority NOT IN ('low', 'medium', 'high');
   `);
 
@@ -287,6 +293,7 @@ export async function getSnapshot({ userId, workspaceId }) {
     getUserWorkspaces(userId),
     pool.query(
       `SELECT l.id, l.name,
+              l.type,
               COUNT(t.id)::int AS "taskCount",
               COALESCE(SUM(CASE WHEN t.completed_at IS NULL AND t.id IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS "openCount"
        FROM lists l
@@ -301,6 +308,7 @@ export async function getSnapshot({ userId, workspaceId }) {
               t.list_id AS "listId",
               t.title,
               t.description,
+              t.quantity,
               t.due_date AS "dueDate",
               t.priority,
               t.completed_at AS "completedAt",
@@ -337,12 +345,18 @@ export async function getSnapshot({ userId, workspaceId }) {
   };
 }
 
-export async function createList({ workspaceId, userId, name }) {
+export async function createList({ workspaceId, userId, name, type = 'task' }) {
+  if (!LIST_TYPES.has(type)) {
+    const error = new Error('Invalid list type.');
+    error.status = 400;
+    throw error;
+  }
+
   const result = await pool.query(
-    `INSERT INTO lists (workspace_id, name, created_by_user_id)
-     VALUES ($1, $2, $3)
-     RETURNING id, name`,
-    [workspaceId, name.trim(), userId]
+    `INSERT INTO lists (workspace_id, name, type, created_by_user_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, name, type`,
+    [workspaceId, name.trim(), type, userId]
   );
   return result.rows[0];
 }
@@ -357,18 +371,31 @@ export async function deleteList({ workspaceId, listId }) {
   return result.rowCount ? { ok: true } : { ok: false, reason: 'not-found' };
 }
 
-export async function createTask({ workspaceId, userId, listId, title, description = '', dueDate = null, priority = 'medium' }) {
+export async function createTask({
+  workspaceId,
+  userId,
+  listId,
+  title,
+  description = '',
+  quantity = '',
+  dueDate = null,
+  priority = 'medium'
+}) {
   const list = await pool.query(
-    'SELECT id FROM lists WHERE id = $1 AND workspace_id = $2',
+    'SELECT id, type FROM lists WHERE id = $1 AND workspace_id = $2',
     [listId, workspaceId]
   );
   if (!list.rowCount) return null;
+  const listType = list.rows[0].type;
+  const normalizedDueDate = listType === 'task' ? dueDate : null;
+  const normalizedPriority = listType === 'task' ? priority : 'medium';
+  const normalizedQuantity = listType === 'grocery' ? quantity.trim() : '';
 
   const result = await pool.query(
-    `INSERT INTO tasks (workspace_id, list_id, title, description, due_date, priority, created_by_user_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, list_id AS "listId", title, description, due_date AS "dueDate", priority`,
-    [workspaceId, listId, title.trim(), description.trim(), dueDate, priority, userId]
+    `INSERT INTO tasks (workspace_id, list_id, title, description, quantity, due_date, priority, created_by_user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, list_id AS "listId", title, description, quantity, due_date AS "dueDate", priority`,
+    [workspaceId, listId, title.trim(), description.trim(), normalizedQuantity, normalizedDueDate, normalizedPriority, userId]
   );
   return result.rows[0];
 }
@@ -381,6 +408,8 @@ export async function updateTask({
   title,
   descriptionProvided,
   description,
+  quantityProvided,
+  quantity,
   dueDateProvided,
   dueDate,
   priorityProvided,
@@ -388,32 +417,48 @@ export async function updateTask({
   completedProvided,
   completed
 }) {
+  const listResult = await pool.query(
+    `SELECT l.type
+     FROM tasks t
+     JOIN lists l ON l.id = t.list_id
+     WHERE t.id = $1 AND t.workspace_id = $2`,
+    [taskId, workspaceId]
+  );
+
+  if (!listResult.rowCount) {
+    return false;
+  }
+
+  const listType = listResult.rows[0].type;
   const result = await pool.query(
     `UPDATE tasks
      SET title = CASE WHEN $1::boolean THEN $2 ELSE title END,
          description = CASE WHEN $3::boolean THEN $4 ELSE description END,
-         due_date = CASE WHEN $5::boolean THEN $6 ELSE due_date END,
-         priority = CASE WHEN $7::boolean THEN $8 ELSE priority END,
+         quantity = CASE WHEN $5::boolean THEN $6 ELSE quantity END,
+         due_date = CASE WHEN $7::boolean THEN $8 ELSE due_date END,
+         priority = CASE WHEN $9::boolean THEN $10 ELSE priority END,
          completed_at = CASE
-           WHEN NOT $9::boolean THEN completed_at
-           WHEN $10 THEN NOW()
+           WHEN NOT $11::boolean THEN completed_at
+           WHEN $12 THEN NOW()
            ELSE NULL
          END,
          completed_by_user_id = CASE
-           WHEN NOT $9::boolean THEN completed_by_user_id
-           WHEN $10 THEN $11
+           WHEN NOT $11::boolean THEN completed_by_user_id
+           WHEN $12 THEN $13
            ELSE NULL
          END
-     WHERE id = $12 AND workspace_id = $13`,
+     WHERE id = $14 AND workspace_id = $15`,
     [
       titleProvided,
       title,
       descriptionProvided,
       description,
-      dueDateProvided,
-      dueDate,
-      priorityProvided,
-      priority,
+      quantityProvided && listType === 'grocery',
+      listType === 'grocery' ? quantity : '',
+      dueDateProvided && listType === 'task',
+      listType === 'task' ? dueDate : null,
+      priorityProvided && listType === 'task',
+      listType === 'task' ? priority : 'medium',
       completedProvided,
       completed,
       completed ? userId : null,

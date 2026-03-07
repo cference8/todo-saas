@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AuthPanel from './components/AuthPanel.vue';
+import GroceryPanel from './components/GroceryPanel.vue';
 import MemberPanel from './components/MemberPanel.vue';
 import TaskPanel from './components/TaskPanel.vue';
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue';
@@ -36,6 +37,10 @@ const activeTasks = computed(() => {
     .sort((a, b) => {
       const completionOrder = Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt));
       if (completionOrder !== 0) return completionOrder;
+
+      if (activeList.value?.type === 'grocery') {
+        return b.id - a.id;
+      }
 
       const dueA = a.dueDate ? new Date(`${a.dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
       const dueB = b.dueDate ? new Date(`${b.dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
@@ -247,11 +252,11 @@ async function switchWorkspace(nextWorkspaceId) {
   });
 }
 
-async function createList(name) {
+async function createList(payload) {
   await withPending(async () => {
     const created = await request('/api/lists', {
       method: 'POST',
-      body: JSON.stringify({ name, workspaceId: workspaceId.value })
+      body: JSON.stringify({ name: payload.name, type: payload.type, workspaceId: workspaceId.value })
     });
     activeListId.value = created.list.id;
     await loadBootstrap();
@@ -277,6 +282,7 @@ async function createTask(payload) {
         listId: activeListId.value,
         title: payload.title,
         description: payload.description,
+        quantity: payload.quantity,
         dueDate: payload.dueDate,
         priority: payload.priority
       })
@@ -302,6 +308,7 @@ async function saveTask(taskId, payload) {
       body: JSON.stringify({
         title: payload.title,
         description: payload.description,
+        quantity: payload.quantity,
         dueDate: payload.dueDate,
         priority: payload.priority
       })
@@ -451,6 +458,19 @@ onBeforeUnmount(() => {
         />
 
         <TaskPanel
+          v-if="activeList?.type !== 'grocery'"
+          :active-list="activeList"
+          :tasks="activeTasks"
+          :pending="pending"
+          :socket-state="socketState"
+          @create-task="createTask"
+          @save-task="saveTask"
+          @toggle-task="toggleTask"
+          @delete-task="deleteTask"
+        />
+
+        <GroceryPanel
+          v-else
           :active-list="activeList"
           :tasks="activeTasks"
           :pending="pending"

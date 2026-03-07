@@ -251,12 +251,18 @@ app.post('/api/invites/accept', requireAuth, async (req, res) => {
 app.post('/api/lists', requireAuth, requireWorkspace, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
+    const type = String(req.body.type || 'task').trim().toLowerCase();
     if (!name) {
       res.status(400).json({ error: 'List name is required.' });
       return;
     }
 
-    const list = await createList({ workspaceId: req.workspaceId, userId: req.auth.userId, name });
+    if (!['task', 'grocery'].includes(type)) {
+      res.status(400).json({ error: 'List type must be task or grocery.' });
+      return;
+    }
+
+    const list = await createList({ workspaceId: req.workspaceId, userId: req.auth.userId, name, type });
     broadcastToWorkspace(req.workspaceId, 'list.created', { listId: list.id });
     res.status(201).json({ list });
   } catch (error) {
@@ -289,6 +295,7 @@ app.post('/api/tasks', requireAuth, requireWorkspace, async (req, res) => {
     const listId = Number(req.body.listId);
     const title = String(req.body.title || '').trim();
     const description = String(req.body.description || '').trim();
+    const quantity = String(req.body.quantity || '').trim();
     const dueDate = req.body.dueDate ? String(req.body.dueDate) : null;
     const priority = String(req.body.priority || 'medium').trim().toLowerCase();
     if (!listId || !title) {
@@ -306,7 +313,7 @@ app.post('/api/tasks', requireAuth, requireWorkspace, async (req, res) => {
       return;
     }
 
-    const task = await createTask({ workspaceId: req.workspaceId, userId: req.auth.userId, listId, title, description, dueDate, priority });
+    const task = await createTask({ workspaceId: req.workspaceId, userId: req.auth.userId, listId, title, description, quantity, dueDate, priority });
     if (!task) {
       res.status(404).json({ error: 'List not found.' });
       return;
@@ -330,6 +337,7 @@ app.patch('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => {
 
     const title = titleProvided ? String(req.body.title || '').trim() : undefined;
     const description = descriptionProvided ? String(req.body.description || '').trim() : undefined;
+    const quantity = hasOwn('quantity') ? String(req.body.quantity || '').trim() : undefined;
     const dueDate = dueDateProvided ? (req.body.dueDate ? String(req.body.dueDate) : null) : undefined;
     const priority = priorityProvided ? String(req.body.priority || '').trim().toLowerCase() : undefined;
     const completed = completedProvided ? Boolean(req.body.completed) : undefined;
@@ -362,6 +370,8 @@ app.patch('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => {
       title,
       descriptionProvided,
       description,
+      quantityProvided: hasOwn('quantity'),
+      quantity,
       dueDateProvided,
       dueDate,
       priorityProvided,

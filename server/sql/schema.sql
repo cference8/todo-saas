@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS lists (
   id BIGSERIAL PRIMARY KEY,
   workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'task',
   created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   list_id BIGINT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  quantity TEXT NOT NULL DEFAULT '',
   due_date DATE,
   priority TEXT NOT NULL DEFAULT 'medium',
   completed_at TIMESTAMPTZ,

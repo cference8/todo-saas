@@ -172,6 +172,7 @@ npm run dev
 - Login returns all workspaces the user belongs to
 - Owners can generate invite links for email addresses from the current workspace
 - Invite links can be accepted by an existing account with the invited email, or by registering a new account for that email
+- Lists can be created as `task` lists or `grocery` lists, and item fields adapt to the selected list type
 - The selected workspace determines API scope and WebSocket broadcasts
 
 ## Next logical upgrades

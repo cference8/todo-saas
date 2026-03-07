@@ -25,15 +25,13 @@ const emit = defineEmits(['create-task', 'save-task', 'toggle-task', 'delete-tas
 const draft = reactive({
   title: '',
   description: '',
-  dueDate: '',
-  priority: 'medium'
+  quantity: ''
 });
 const editingTaskId = ref(null);
 const editDraft = reactive({
   title: '',
   description: '',
-  dueDate: '',
-  priority: 'medium'
+  quantity: ''
 });
 
 const completionRate = computed(() => {
@@ -47,24 +45,23 @@ watch(
   () => {
     draft.title = '';
     draft.description = '';
-    draft.dueDate = '';
-    draft.priority = 'medium';
+    draft.quantity = '';
     editingTaskId.value = null;
   }
 );
 
-function submitTask() {
+function submitItem() {
   if (!draft.title.trim() || !props.activeList) return;
   emit('create-task', {
     title: draft.title.trim(),
     description: draft.description.trim(),
-    dueDate: draft.dueDate || null,
-    priority: draft.priority
+    quantity: draft.quantity.trim(),
+    dueDate: null,
+    priority: 'medium'
   });
   draft.title = '';
   draft.description = '';
-  draft.dueDate = '';
-  draft.priority = 'medium';
+  draft.quantity = '';
 }
 
 function startEditing(task) {
@@ -72,8 +69,7 @@ function startEditing(task) {
   editingTaskId.value = task.id;
   editDraft.title = task.title;
   editDraft.description = task.description || '';
-  editDraft.dueDate = task.dueDate || '';
-  editDraft.priority = task.priority || 'medium';
+  editDraft.quantity = task.quantity || '';
 }
 
 function cancelEditing() {
@@ -85,8 +81,9 @@ function submitEdit(taskId) {
   emit('save-task', taskId, {
     title: editDraft.title.trim(),
     description: editDraft.description.trim(),
-    dueDate: editDraft.dueDate || null,
-    priority: editDraft.priority
+    quantity: editDraft.quantity.trim(),
+    dueDate: null,
+    priority: 'medium'
   });
   editingTaskId.value = null;
 }
@@ -96,39 +93,35 @@ function submitEdit(taskId) {
   <section class="panel task-panel">
     <header class="task-header">
       <div>
-        <p class="eyebrow">Live board</p>
+        <p class="eyebrow">Grocery board</p>
         <h2>{{ activeList?.name || 'Select a list' }}</h2>
-        <p class="subtle">{{ tasks.length }} total tasks • {{ completionRate }}% complete</p>
+        <p class="subtle">{{ tasks.length }} total items • {{ completionRate }}% checked off</p>
       </div>
       <div class="status-pill" :class="socketState">
         {{ socketState === 'open' ? 'Realtime connected' : socketState === 'connecting' ? 'Connecting' : 'Offline sync' }}
       </div>
     </header>
 
-    <form class="composer composer-rich" @submit.prevent="submitTask">
+    <form class="composer composer-grocery" @submit.prevent="submitItem">
       <input
         v-model="draft.title"
         :disabled="!activeList || pending"
         type="text"
-        placeholder="Add a task for the team"
+        placeholder="Add a grocery item"
       />
       <input
-        v-model="draft.dueDate"
+        v-model="draft.quantity"
         :disabled="!activeList || pending"
-        type="date"
+        type="text"
+        placeholder="Qty / size"
       />
-      <select v-model="draft.priority" :disabled="!activeList || pending">
-        <option value="low">Low</option>
-        <option value="medium">Medium</option>
-        <option value="high">High</option>
-      </select>
-      <button type="submit" :disabled="!activeList || pending || !draft.title.trim()">Add task</button>
+      <button type="submit" :disabled="!activeList || pending || !draft.title.trim()">Add item</button>
       <textarea
         v-model="draft.description"
         class="task-description-input"
         :disabled="!activeList || pending"
         rows="3"
-        placeholder="Optional notes or context"
+        placeholder="Optional brand, aisle, or note"
       />
     </form>
 
@@ -145,13 +138,12 @@ function submitEdit(taskId) {
             <span>
               <strong>{{ task.title }}</strong>
               <small>Created {{ task.createdAtLabel }} by {{ task.createdByName }}</small>
-              <small v-if="task.completedAtLabel">Completed {{ task.completedAtLabel }}</small>
+              <small v-if="task.completedAtLabel">Checked off {{ task.completedAtLabel }}</small>
             </span>
           </label>
 
           <div class="task-badges">
-            <span class="priority-badge" :class="`priority-${task.priority}`">{{ task.priority }}</span>
-            <span v-if="task.dueDateLabel" class="meta-badge">Due {{ task.dueDateLabel }}</span>
+            <span v-if="task.quantity" class="meta-badge">Qty {{ task.quantity }}</span>
           </div>
 
           <p v-if="task.description" class="task-note">{{ task.description }}</p>
@@ -162,15 +154,8 @@ function submitEdit(taskId) {
             @submit.prevent="submitEdit(task.id)"
           >
             <input v-model="editDraft.title" type="text" :disabled="pending" />
-            <textarea v-model="editDraft.description" rows="3" :disabled="pending" placeholder="Task details"></textarea>
-            <div class="task-editor-row">
-              <input v-model="editDraft.dueDate" type="date" :disabled="pending" />
-              <select v-model="editDraft.priority" :disabled="pending">
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </div>
+            <input v-model="editDraft.quantity" type="text" :disabled="pending" placeholder="Qty / size" />
+            <textarea v-model="editDraft.description" rows="3" :disabled="pending" placeholder="Brand, aisle, or note"></textarea>
             <div class="task-editor-actions">
               <button type="submit" class="ghost-button" :disabled="pending || !editDraft.title.trim()">Save</button>
               <button type="button" class="ghost-button muted-button" :disabled="pending" @click="cancelEditing">Cancel</button>
@@ -185,7 +170,7 @@ function submitEdit(taskId) {
           <button class="ghost-danger" :disabled="pending" @click="emit('delete-task', task.id)">Delete</button>
         </div>
       </li>
-      <li v-if="!tasks.length" class="task-empty">No tasks yet. Add the first item to start collaborating.</li>
+      <li v-if="!tasks.length" class="task-empty">No grocery items yet. Add the first item to start the list.</li>
     </ul>
   </section>
 </template>
