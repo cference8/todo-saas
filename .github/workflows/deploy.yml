@@ -1,0 +1,25 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Show runner context
+        run: |
+          whoami
+          hostname
+          pwd
+
+      - name: Deploy application on Pi
+        run: /home/retropi/apps/todo-saas/deploy/deploy.sh
