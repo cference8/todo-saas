@@ -32,7 +32,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -123,13 +124,24 @@ button {
 .workspace-switcher,
 .auth-form input,
 .invite-form input,
-.composer input {
+.composer input,
+.composer select,
+.composer textarea,
+.task-editor input,
+.task-editor select,
+.task-editor textarea {
   width: 100%;
   min-height: 52px;
   border-radius: 18px;
   border: 1px solid rgba(30, 41, 51, 0.12);
   background: rgba(255, 255, 255, 0.92);
   padding: 0 1rem;
+}
+
+textarea {
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+  resize: vertical;
 }
 
 .sidebar-list,
@@ -196,8 +208,15 @@ button {
 }
 
 .composer {
-  grid-template-columns: 1fr auto;
   margin: 1.25rem 0;
+}
+
+.composer-rich {
+  grid-template-columns: minmax(0, 1.5fr) 180px 140px auto;
+}
+
+.task-description-input {
+  grid-column: 1 / -1;
 }
 
 .composer button,
@@ -254,12 +273,17 @@ button {
 .task-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: start;
   gap: 1rem;
   padding: 1rem;
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(30, 41, 51, 0.06);
+}
+
+.task-row-main {
+  flex: 1;
+  min-width: 0;
 }
 
 .task-row.done strong {
@@ -281,6 +305,78 @@ button {
 .task-main span {
   display: flex;
   flex-direction: column;
+}
+
+.task-badges,
+.task-actions,
+.task-editor-row,
+.task-editor-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.task-badges {
+  margin: 0.75rem 0 0;
+}
+
+.priority-badge,
+.meta-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.meta-badge {
+  background: rgba(94, 170, 247, 0.14);
+  color: #265f8d;
+}
+
+.priority-low {
+  background: rgba(126, 161, 105, 0.16);
+  color: #557642;
+}
+
+.priority-medium {
+  background: rgba(247, 180, 94, 0.22);
+  color: #8e5e14;
+}
+
+.priority-high {
+  background: rgba(187, 79, 57, 0.15);
+  color: var(--danger);
+}
+
+.task-note {
+  margin: 0.8rem 0 0;
+  color: var(--text-soft);
+  white-space: pre-wrap;
+}
+
+.task-editor {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(30, 41, 51, 0.08);
+}
+
+.task-actions {
+  justify-content: end;
+}
+
+.muted-button {
+  background: rgba(30, 41, 51, 0.08);
+  color: #1e2933;
+}
+
+.muted-button:hover {
+  background: rgba(30, 41, 51, 0.14);
 }
 
 .status-pill {
@@ -366,6 +462,15 @@ button {
 
   .composer {
     grid-template-columns: 1fr;
+  }
+
+  .composer-rich {
+    grid-template-columns: 1fr;
+  }
+
+  .task-actions {
+    width: 100%;
+    justify-content: start;
   }
 
   .composer button,

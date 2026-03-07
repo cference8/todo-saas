@@ -57,6 +57,9 @@ export async function initDb() {
       workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       list_id BIGINT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      due_date DATE,
+      priority TEXT NOT NULL DEFAULT 'medium',
       completed_at TIMESTAMPTZ,
       created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
       completed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -67,6 +70,13 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_tasks_workspace_id ON tasks(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_list_id ON tasks(list_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members(user_id);
+  `);
+
+  await pool.query(`
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date DATE;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium';
+    UPDATE tasks SET priority = 'medium' WHERE priority IS NULL OR priority NOT IN ('low', 'medium', 'high');
   `);
 }
 
@@ -230,6 +240,9 @@ export async function getSnapshot({ userId, workspaceId }) {
       `SELECT t.id,
               t.list_id AS "listId",
               t.title,
+              t.description,
+              t.due_date AS "dueDate",
+              t.priority,
               t.completed_at AS "completedAt",
               t.created_at AS "createdAt",
               creator.name AS "createdByName",
@@ -254,6 +267,7 @@ export async function getSnapshot({ userId, workspaceId }) {
       ...task,
       createdAtLabel: fmt(task.createdAt),
       completedAtLabel: fmt(task.completedAt),
+      dueDateLabel: task.dueDate ? new Date(`${task.dueDate}T00:00:00`).toLocaleDateString() : null,
       createdByName: task.createdByName || 'Unknown user',
       completedByName: task.completedByName || null
     })),
@@ -281,7 +295,7 @@ export async function deleteList({ workspaceId, listId }) {
   return result.rowCount ? { ok: true } : { ok: false, reason: 'not-found' };
 }
 
-export async function createTask({ workspaceId, userId, listId, title }) {
+export async function createTask({ workspaceId, userId, listId, title, description = '', dueDate = null, priority = 'medium' }) {
   const list = await pool.query(
     'SELECT id FROM lists WHERE id = $1 AND workspace_id = $2',
     [listId, workspaceId]
@@ -289,21 +303,61 @@ export async function createTask({ workspaceId, userId, listId, title }) {
   if (!list.rowCount) return null;
 
   const result = await pool.query(
-    `INSERT INTO tasks (workspace_id, list_id, title, created_by_user_id)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, list_id AS "listId", title`,
-    [workspaceId, listId, title.trim(), userId]
+    `INSERT INTO tasks (workspace_id, list_id, title, description, due_date, priority, created_by_user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, list_id AS "listId", title, description, due_date AS "dueDate", priority`,
+    [workspaceId, listId, title.trim(), description.trim(), dueDate, priority, userId]
   );
   return result.rows[0];
 }
 
-export async function setTaskCompletion({ workspaceId, userId, taskId, completed }) {
+export async function updateTask({
+  workspaceId,
+  userId,
+  taskId,
+  titleProvided,
+  title,
+  descriptionProvided,
+  description,
+  dueDateProvided,
+  dueDate,
+  priorityProvided,
+  priority,
+  completedProvided,
+  completed
+}) {
   const result = await pool.query(
     `UPDATE tasks
-     SET completed_at = $1,
-         completed_by_user_id = $2
-     WHERE id = $3 AND workspace_id = $4`,
-    [completed ? new Date().toISOString() : null, completed ? userId : null, taskId, workspaceId]
+     SET title = CASE WHEN $1::boolean THEN $2 ELSE title END,
+         description = CASE WHEN $3::boolean THEN $4 ELSE description END,
+         due_date = CASE WHEN $5::boolean THEN $6 ELSE due_date END,
+         priority = CASE WHEN $7::boolean THEN $8 ELSE priority END,
+         completed_at = CASE
+           WHEN NOT $9::boolean THEN completed_at
+           WHEN $10 THEN NOW()
+           ELSE NULL
+         END,
+         completed_by_user_id = CASE
+           WHEN NOT $9::boolean THEN completed_by_user_id
+           WHEN $10 THEN $11
+           ELSE NULL
+         END
+     WHERE id = $12 AND workspace_id = $13`,
+    [
+      titleProvided,
+      title,
+      descriptionProvided,
+      description,
+      dueDateProvided,
+      dueDate,
+      priorityProvided,
+      priority,
+      completedProvided,
+      completed,
+      completed ? userId : null,
+      taskId,
+      workspaceId
+    ]
   );
   return result.rowCount > 0;
 }

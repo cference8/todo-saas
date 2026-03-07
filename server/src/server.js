@@ -17,7 +17,7 @@ import {
   getSnapshot,
   initDb,
   registerUser,
-  setTaskCompletion
+  updateTask
 } from './db.js';
 
 const app = express();
@@ -223,12 +223,25 @@ app.post('/api/tasks', requireAuth, requireWorkspace, async (req, res) => {
   try {
     const listId = Number(req.body.listId);
     const title = String(req.body.title || '').trim();
+    const description = String(req.body.description || '').trim();
+    const dueDate = req.body.dueDate ? String(req.body.dueDate) : null;
+    const priority = String(req.body.priority || 'medium').trim().toLowerCase();
     if (!listId || !title) {
       res.status(400).json({ error: 'listId and title are required.' });
       return;
     }
 
-    const task = await createTask({ workspaceId: req.workspaceId, userId: req.auth.userId, listId, title });
+    if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+      res.status(400).json({ error: 'dueDate must be in YYYY-MM-DD format.' });
+      return;
+    }
+
+    if (!['low', 'medium', 'high'].includes(priority)) {
+      res.status(400).json({ error: 'priority must be low, medium, or high.' });
+      return;
+    }
+
+    const task = await createTask({ workspaceId: req.workspaceId, userId: req.auth.userId, listId, title, description, dueDate, priority });
     if (!task) {
       res.status(404).json({ error: 'List not found.' });
       return;
@@ -243,11 +256,53 @@ app.post('/api/tasks', requireAuth, requireWorkspace, async (req, res) => {
 
 app.patch('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => {
   try {
-    const updated = await setTaskCompletion({
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
+    const titleProvided = hasOwn('title');
+    const descriptionProvided = hasOwn('description');
+    const dueDateProvided = hasOwn('dueDate');
+    const priorityProvided = hasOwn('priority');
+    const completedProvided = hasOwn('completed');
+
+    const title = titleProvided ? String(req.body.title || '').trim() : undefined;
+    const description = descriptionProvided ? String(req.body.description || '').trim() : undefined;
+    const dueDate = dueDateProvided ? (req.body.dueDate ? String(req.body.dueDate) : null) : undefined;
+    const priority = priorityProvided ? String(req.body.priority || '').trim().toLowerCase() : undefined;
+    const completed = completedProvided ? Boolean(req.body.completed) : undefined;
+
+    if (!titleProvided && !descriptionProvided && !dueDateProvided && !priorityProvided && !completedProvided) {
+      res.status(400).json({ error: 'No task changes were provided.' });
+      return;
+    }
+
+    if (titleProvided && !title) {
+      res.status(400).json({ error: 'title cannot be empty.' });
+      return;
+    }
+
+    if (dueDateProvided && dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+      res.status(400).json({ error: 'dueDate must be in YYYY-MM-DD format.' });
+      return;
+    }
+
+    if (priorityProvided && !['low', 'medium', 'high'].includes(priority)) {
+      res.status(400).json({ error: 'priority must be low, medium, or high.' });
+      return;
+    }
+
+    const updated = await updateTask({
       workspaceId: req.workspaceId,
       userId: req.auth.userId,
       taskId: Number(req.params.id),
-      completed: Boolean(req.body.completed)
+      titleProvided,
+      title,
+      descriptionProvided,
+      description,
+      dueDateProvided,
+      dueDate,
+      priorityProvided,
+      priority,
+      completedProvided,
+      completed
     });
 
     if (!updated) {

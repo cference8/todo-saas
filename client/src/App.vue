@@ -27,9 +27,22 @@ let allowReconnect = true;
 
 const activeList = computed(() => lists.value.find((list) => list.id === activeListId.value) || null);
 const activeTasks = computed(() => {
+  const priorityWeight = { high: 0, medium: 1, low: 2 };
   return tasks.value
     .filter((task) => task.listId === activeListId.value)
-    .sort((a, b) => Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt)) || b.id - a.id);
+    .sort((a, b) => {
+      const completionOrder = Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt));
+      if (completionOrder !== 0) return completionOrder;
+
+      const dueA = a.dueDate ? new Date(`${a.dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
+      const dueB = b.dueDate ? new Date(`${b.dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
+      if (dueA !== dueB) return dueA - dueB;
+
+      const priorityOrder = (priorityWeight[a.priority] ?? 1) - (priorityWeight[b.priority] ?? 1);
+      if (priorityOrder !== 0) return priorityOrder;
+
+      return b.id - a.id;
+    });
 });
 const currentMembership = computed(() => memberships.value.find((item) => item.id === workspaceId.value) || null);
 const isAuthenticated = computed(() => Boolean(token.value));
@@ -220,12 +233,20 @@ async function deleteList(listId) {
   });
 }
 
-async function createTask(title) {
+async function createTask(payload) {
   await withPending(async () => {
     await request('/api/tasks', {
       method: 'POST',
-      body: JSON.stringify({ workspaceId: workspaceId.value, listId: activeListId.value, title })
+      body: JSON.stringify({
+        workspaceId: workspaceId.value,
+        listId: activeListId.value,
+        title: payload.title,
+        description: payload.description,
+        dueDate: payload.dueDate,
+        priority: payload.priority
+      })
     });
+    await loadBootstrap();
   });
 }
 
@@ -235,6 +256,22 @@ async function toggleTask(task) {
       method: 'PATCH',
       body: JSON.stringify({ workspaceId: workspaceId.value, completed: !task.completedAt })
     });
+    await loadBootstrap();
+  });
+}
+
+async function saveTask(taskId, payload) {
+  await withPending(async () => {
+    await request(`/api/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        title: payload.title,
+        description: payload.description,
+        dueDate: payload.dueDate,
+        priority: payload.priority
+      })
+    });
+    await loadBootstrap();
   });
 }
 
@@ -247,6 +284,7 @@ async function deleteTask(taskId) {
       method: 'DELETE',
       body: JSON.stringify({ workspaceId: workspaceId.value })
     });
+    await loadBootstrap();
   });
 }
 
@@ -320,6 +358,7 @@ onBeforeUnmount(() => {
           :pending="pending"
           :socket-state="socketState"
           @create-task="createTask"
+          @save-task="saveTask"
           @toggle-task="toggleTask"
           @delete-task="deleteTask"
         />
