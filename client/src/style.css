@@ -18,6 +18,7 @@
   --accent-dark: #0a6a58;
   --text-soft: #62727f;
   --danger: #bb4f39;
+  --danger-bg: rgba(187, 79, 57, 0.12);
 }
 
 * {
@@ -30,7 +31,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -39,16 +41,19 @@ button {
 }
 
 .app-shell {
-  width: min(1180px, calc(100vw - 2rem));
+  width: min(1380px, calc(100vw - 2rem));
   margin: 0 auto;
   padding: 1.25rem 0 2rem;
 }
 
 .layout-grid {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
   gap: 1rem;
   margin-top: 1rem;
+}
+
+.three-up {
+  grid-template-columns: 320px minmax(0, 1fr) 320px;
 }
 
 .panel {
@@ -59,16 +64,20 @@ button {
   box-shadow: 0 20px 50px rgba(30, 41, 51, 0.08);
 }
 
-.hero-bar {
+.hero-bar,
+.auth-shell {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  gap: 1.25rem;
+  align-items: stretch;
   padding: 1.2rem 1.4rem;
 }
 
 .hero-bar h1,
 .sidebar-header h1,
-.task-header h2 {
+.task-header h2,
+.member-header h2,
+.auth-copy h1 {
   margin: 0;
 }
 
@@ -89,25 +98,49 @@ button {
 }
 
 .sidebar-panel,
-.task-panel {
+.task-panel,
+.member-panel {
   padding: 1.2rem;
 }
 
 .sidebar-header,
-.task-header {
+.task-header,
+.member-header {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
   align-items: start;
 }
 
-.sidebar-list {
+.workspace-switcher-label {
+  display: block;
+  margin-top: 1rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+.workspace-switcher,
+.auth-form input,
+.invite-form input,
+.composer input {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 18px;
+  border: 1px solid rgba(30, 41, 51, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0 1rem;
+}
+
+.sidebar-list,
+.member-list {
   display: grid;
   gap: 0.8rem;
   margin-top: 1.2rem;
 }
 
-.list-card {
+.list-card,
+.member-row {
   border: 1px solid transparent;
   background: rgba(246, 241, 232, 0.85);
   border-radius: 22px;
@@ -115,8 +148,7 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  text-align: left;
-  transition: transform 140ms ease, border-color 140ms ease;
+  gap: 0.75rem;
 }
 
 .list-card:hover {
@@ -128,7 +160,8 @@ button {
   background: rgba(227, 248, 243, 0.9);
 }
 
-.list-card span {
+.list-card span,
+.member-row span {
   display: flex;
   flex-direction: column;
 }
@@ -144,7 +177,9 @@ button {
 .list-card small,
 .subtle,
 .task-main small,
-.task-empty {
+.task-empty,
+.member-row small,
+.auth-copy p {
   color: var(--text-soft);
 }
 
@@ -153,52 +188,59 @@ button {
   gap: 0.5rem;
 }
 
-.composer {
+.composer,
+.invite-form,
+.auth-form {
   display: grid;
-  grid-template-columns: 1fr auto;
   gap: 0.75rem;
-  margin: 1.25rem 0;
 }
 
-.composer input {
-  min-height: 54px;
-  border-radius: 18px;
-  border: 1px solid rgba(30, 41, 51, 0.12);
-  background: rgba(255, 255, 255, 0.9);
-  padding: 0 1rem;
+.composer {
+  grid-template-columns: 1fr auto;
+  margin: 1.25rem 0;
 }
 
 .composer button,
 .ghost-button,
 .ghost-danger,
-.icon-button {
+.icon-button,
+.auth-form button,
+.invite-form button,
+.auth-toggle button {
   border: 0;
   border-radius: 16px;
 }
 
 .composer button,
-.ghost-button {
+.ghost-button,
+.auth-form button,
+.invite-form button,
+.auth-toggle button.active {
   background: var(--accent);
   color: white;
   padding: 0 1rem;
 }
 
 .composer button:hover,
-.ghost-button:hover {
+.ghost-button:hover,
+.auth-form button:hover,
+.invite-form button:hover {
   background: var(--accent-dark);
 }
 
-.ghost-danger {
-  background: rgba(187, 79, 57, 0.12);
+.ghost-danger,
+.icon-button {
+  background: var(--danger-bg);
   color: var(--danger);
+}
+
+.ghost-danger {
   padding: 0.65rem 0.9rem;
 }
 
 .icon-button {
   width: 28px;
   height: 28px;
-  background: rgba(187, 79, 57, 0.12);
-  color: var(--danger);
 }
 
 .task-list {
@@ -260,34 +302,77 @@ button {
   color: #265f8d;
 }
 
-@media (max-width: 900px) {
-  .layout-grid {
+.auth-shell {
+  min-height: calc(100vh - 4rem);
+  align-items: center;
+}
+
+.auth-copy,
+.auth-card {
+  flex: 1;
+}
+
+.auth-copy {
+  padding: 1rem;
+}
+
+.auth-card {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 28px;
+  padding: 1.25rem;
+}
+
+.auth-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.auth-toggle button {
+  background: rgba(13, 139, 115, 0.08);
+  color: var(--accent-dark);
+  min-height: 46px;
+}
+
+.error-banner {
+  margin: 1rem 0 0;
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  background: rgba(187, 79, 57, 0.1);
+  color: #8f3827;
+}
+
+@media (max-width: 1100px) {
+  .three-up {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .app-shell {
     width: min(100vw - 1rem, 100%);
     padding-top: 0.5rem;
   }
 
   .hero-bar,
+  .auth-shell,
   .sidebar-header,
   .task-header,
-  .task-row,
-  .composer {
-    grid-template-columns: 1fr;
+  .member-header,
+  .task-row {
     flex-direction: column;
   }
 
   .composer {
-    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .composer button,
   .ghost-button,
-  .ghost-danger {
+  .ghost-danger,
+  .auth-form button,
+  .invite-form button {
     width: 100%;
     min-height: 48px;
   }

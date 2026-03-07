@@ -1,63 +1,124 @@
 # Todo SaaS
 
-This is a Vue-based replacement for the original `todo/` Firebase app. It keeps the simple collaborative todo workflow, but moves the realtime layer and persistence into your own stack:
+This app has been upgraded from the original static/Firebase todo into a Vue + Node SaaS foundation with:
 
-- `client/`: Vue 3 + Vite frontend
-- `server/`: Express API + WebSocket server
-- `server/data/todo-saas.db`: SQLite database created automatically on first run
+- Vue 3 frontend via Vite
+- Express API
+- Postgres database
+- JWT authentication
+- Multi-user workspaces and workspace membership
+- WebSocket realtime updates scoped per workspace
 
-## Why this is a better base
+## Project layout
 
-- No Firebase or Google hosted realtime database
-- Free local database using SQLite
-- WebSocket-based realtime sync you control
-- Cleaner path toward a SaaS architecture with `workspaces`, `users`, `lists`, and `tasks`
-- Easy future migration from SQLite to Postgres because the backend owns the data model
+- `client/`: Vue application
+- `server/`: Express + WebSocket API
+- `server/sql/schema.sql`: Postgres schema reference
+- `server/.env.example`: required backend environment variables
 
-## Run it
+## Backend requirements
 
-Install dependencies in both app halves:
+You need a running Postgres database. The fastest local option is Docker Compose.
+
+## One-command startup
+
+From the project root:
 
 ```bash
-cd todo-saas/client && npm install
+docker compose up --build
+```
+
+That starts:
+
+- Postgres on `localhost:5432`
+- API server on `localhost:3011`
+- Vue client on `localhost:5173`
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+The client proxies API and WebSocket traffic to the backend container automatically.
+
+## Docker services
+
+If you only want the database, you can still run just Postgres:
+
+```bash
+docker compose up -d postgres
+```
+
+The Postgres container uses:
+
+- database: `todo_saas`
+- user: `postgres`
+- password: `postgres`
+
+To stop it:
+
+```bash
+docker compose down
+```
+
+To stop it and delete the database volume:
+
+```bash
+docker compose down -v
+```
+
+## Backend environment
+
+Default local connection string:
+
+```bash
+postgres://postgres:postgres@localhost:5432/todo_saas
+```
+
+Create a `.env` file in `server/` based on `.env.example` only if you want to run the backend outside Docker.
+
+If port `3001` is already in use on your machine, change `PORT` in `server/.env` to another port such as `3011`.
+
+## Install
+
+```bash
+cd client && npm install
 cd ../server && npm install
 ```
 
-In one terminal, run the API and WebSocket server:
+## Local development without Docker for app services
+
+Run the server:
 
 ```bash
-cd todo-saas/server
+cd server
 npm run dev
 ```
 
-In another terminal, run the Vue client:
+Run the client in another terminal:
 
 ```bash
-cd todo-saas/client
+cd client
 npm run dev
 ```
 
-Open the Vite URL, usually `http://localhost:5173`.
-
-## Production flow
-
-Build the Vue app:
+If the backend is not running on `3001`, start the client with a matching proxy target:
 
 ```bash
-cd todo-saas/client
-npm run build
+VITE_API_TARGET=http://localhost:3011 npm run dev
 ```
 
-Then start the backend, which serves the built client from `client/dist`:
+## Auth flow
 
-```bash
-cd ../server
-npm start
-```
+- Register creates a user account and a first workspace
+- Login returns all workspaces the user belongs to
+- Owners can add existing registered users to the current workspace by email
+- The selected workspace determines API scope and WebSocket broadcasts
 
-## Notes
+## Next logical upgrades
 
-- The backend seeds a default workspace and a few starter tasks.
-- WebSocket clients receive change events and reload the latest snapshot.
-- Right now the app uses one seeded user; multi-user auth is the next logical SaaS upgrade.
-- If you outgrow SQLite, keep the API contract and swap the database layer for Postgres.
+- Email-based invitations instead of add-by-email for existing users only
+- Role management beyond `owner` and `member`
+- Password reset and email verification
+- Billing, organizations, and audit logs

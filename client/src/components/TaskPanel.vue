@@ -50,9 +50,7 @@ function submitTask() {
       <div>
         <p class="eyebrow">Live board</p>
         <h2>{{ activeList?.name || 'Select a list' }}</h2>
-        <p class="subtle">
-          {{ tasks.length }} total tasks • {{ completionRate }}% complete
-        </p>
+        <p class="subtle">{{ tasks.length }} total tasks • {{ completionRate }}% complete</p>
       </div>
       <div class="status-pill" :class="socketState">
         {{ socketState === 'open' ? 'Realtime connected' : socketState === 'connecting' ? 'Connecting' : 'Offline sync' }}

@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: todo-saas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: todo_saas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d todo_saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build:
+      context: ./server
+    container_name: todo-saas-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/todo_saas
+      JWT_SECRET: replace-with-a-long-random-secret
+      CLIENT_ORIGIN: http://localhost:5173
+      PORT: 3001
+    ports:
+      - "3011:3001"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+  client:
+    build:
+      context: ./client
+    container_name: todo-saas-client
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VITE_API_TARGET: http://api:3001
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
