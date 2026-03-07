@@ -87,6 +87,62 @@ Then edit `deploy/pi.env` and set:
 
 `deploy/pi.env` is ignored by git and should exist only on the server.
 
+## Operations
+
+### Manual database backup
+
+On the Pi:
+
+```bash
+cd /home/retropi/apps/todo-saas
+bash deploy/backup.sh
+```
+
+Backups are written to:
+
+```text
+/home/retropi/backups/todo-saas
+```
+
+The script keeps 14 days of `.sql.gz` backups by default and refreshes a `latest.sql.gz` symlink.
+
+### Automated daily backups
+
+On the Pi, edit the crontab:
+
+```bash
+crontab -e
+```
+
+Add a nightly job, for example at `2:15 AM`:
+
+```cron
+15 2 * * * /bin/bash /home/retropi/apps/todo-saas/deploy/backup.sh >> /home/retropi/backups/todo-saas/backup.log 2>&1
+```
+
+### Safe Postgres password rotation
+
+On the Pi:
+
+```bash
+cd /home/retropi/apps/todo-saas
+bash deploy/rotate-postgres-password.sh
+```
+
+If you do not pass a password, the script generates one for you. It will:
+
+- take a backup first
+- change the live `postgres` role password
+- update `deploy/pi.env`
+- recreate the API container
+- verify app health
+
+You can also provide a password explicitly:
+
+```bash
+bash deploy/rotate-postgres-password.sh your-new-strong-password
+```
+
 ## Install
 
 ```bash
