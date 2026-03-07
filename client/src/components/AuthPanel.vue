@@ -6,6 +6,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  errorMessage: {
+    type: String,
+    default: ''
+  },
   pending: {
     type: Boolean,
     default: false
@@ -43,10 +47,22 @@ watch(
 );
 
 function submit() {
+  if (mode.value === 'register') {
+    const trimmedName = form.name.trim();
+    if (trimmedName.length < 2 || trimmedName.length > 60) {
+      emit('submit', {
+        mode: 'validation-error',
+        error: 'Name must be between 2 and 60 characters.'
+      });
+      return;
+    }
+  }
+
   emit('submit', {
     mode: mode.value,
     inviteToken: mode.value === 'register' ? props.invite?.token || null : null,
-    ...form
+    ...form,
+    name: form.name.trim()
   });
 }
 </script>
@@ -67,26 +83,19 @@ function submit() {
 
     <div class="auth-card">
       <div class="auth-toggle">
-        <button
-          v-if="!invite || invite.hasAccount"
-          type="button"
-          :class="{ active: mode === 'login' }"
-          @click="mode = 'login'"
-        >
-          Login
-        </button>
-        <button
-          v-if="!invite || !invite.hasAccount"
-          type="button"
-          :class="{ active: mode === 'register' }"
-          @click="mode = 'register'"
-        >
-          Register
-        </button>
+        <button type="button" :class="{ active: mode === 'login' }" @click="mode = 'login'">Login</button>
+        <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">Register</button>
       </div>
 
       <form class="auth-form" @submit.prevent="submit">
-        <input v-if="mode === 'register'" v-model="form.name" type="text" placeholder="Your name" />
+        <input
+          v-if="mode === 'register'"
+          v-model="form.name"
+          type="text"
+          placeholder="Your name"
+          minlength="2"
+          maxlength="60"
+        />
         <input v-model="form.email" :readonly="Boolean(invite?.email)" type="email" placeholder="Email" />
         <input v-model="form.password" type="password" placeholder="Password" :disabled="pending" />
         <input
@@ -95,9 +104,7 @@ function submit() {
           type="text"
           placeholder="Workspace name"
         />
-        <p v-if="invite" class="subtle">
-          {{ invite.hasAccount ? 'Sign in first, then you will be asked to accept the invite.' : 'Create the account first, then you will be asked to accept the invite.' }}
-        </p>
+        <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
         <button type="submit" :disabled="pending">{{ mode === 'login' ? (invite ? 'Continue to invite' : 'Enter workspace') : (invite ? 'Create account to continue' : 'Create account') }}</button>
       </form>
     </div>

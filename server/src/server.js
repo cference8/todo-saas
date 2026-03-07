@@ -125,6 +125,11 @@ app.post('/api/auth/register', async (req, res) => {
       return;
     }
 
+    if (name.length < 2 || name.length > 60) {
+      res.status(400).json({ error: 'name must be between 2 and 60 characters.' });
+      return;
+    }
+
     const { user, workspace, workspaces } = await registerUser({ name, email, password, workspaceName, inviteToken });
     const token = issueAuthToken({ userId: user.id, email: user.email });
     res.status(201).json({ token, user, workspaces, defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null });

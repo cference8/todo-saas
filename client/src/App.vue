@@ -120,6 +120,10 @@ function clearInviteState() {
   window.history.replaceState({}, '', url);
 }
 
+function isResolvedInviteError(message) {
+  return message === 'This invite has already been accepted.' || message === 'Invite not found or expired.';
+}
+
 function applySnapshot(snapshot) {
   workspace.value = snapshot.workspace;
   currentUser.value = snapshot.currentUser;
@@ -204,13 +208,17 @@ async function withPending(work) {
     await work();
   } catch (error) {
     errorMessage.value = error.message;
-    throw error;
   } finally {
     pending.value = false;
   }
 }
 
 async function handleAuth(payload) {
+  if (payload.mode === 'validation-error') {
+    errorMessage.value = payload.error || 'Please fix the form errors and try again.';
+    return;
+  }
+
   await withPending(async () => {
     const endpoint = payload.mode === 'register' ? '/api/auth/register' : '/api/auth/login';
     const response = await request(endpoint, {
@@ -346,18 +354,33 @@ async function loadInvite() {
 async function acceptInvite() {
   if (!inviteToken.value || !token.value) return;
 
-  await withPending(async () => {
-    const response = await request('/api/invites/accept', {
-      method: 'POST',
-      body: JSON.stringify({ inviteToken: inviteToken.value })
-    });
+  try {
+    await withPending(async () => {
+      const response = await request('/api/invites/accept', {
+        method: 'POST',
+        body: JSON.stringify({ inviteToken: inviteToken.value })
+      });
 
-    workspaceId.value = Number(response.workspaceId);
-    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
-    await loadBootstrap();
-    connectSocket();
-    clearInviteState();
-  });
+      workspaceId.value = Number(response.workspaceId);
+      localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
+      await loadBootstrap();
+      connectSocket();
+      clearInviteState();
+    });
+  } finally {
+    if (inviteDetails.value && isResolvedInviteError(errorMessage.value)) {
+      clearInviteState();
+
+      if (!workspaceId.value && memberships.value.length) {
+        workspaceId.value = Number(memberships.value[0].id);
+        localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
+        await loadBootstrap();
+        connectSocket();
+      }
+
+      errorMessage.value = '';
+    }
+  }
 }
 
 async function restoreSession() {
@@ -387,7 +410,7 @@ onBeforeUnmount(() => {
 <template>
   <main class="app-shell">
     <template v-if="!isAuthenticated">
-      <AuthPanel :invite="inviteDetails" :pending="pending" @submit="handleAuth" />
+      <AuthPanel :invite="inviteDetails" :error-message="errorMessage" :pending="pending" @submit="handleAuth" />
     </template>
 
     <template v-else>
@@ -402,16 +425,17 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
-
       <section v-if="inviteDetails" class="panel invite-accept-panel">
         <div>
           <p class="eyebrow">Pending invite</p>
           <h2>Join {{ inviteDetails.workspaceName }}</h2>
           <p class="subtle">Signed in as {{ currentUser?.email }}. Accept the invite to join this workspace.</p>
+          <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
         </div>
         <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
       </section>
+
+      <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
       <section v-if="hasWorkspace" class="layout-grid three-up">
         <WorkspaceSidebar
