@@ -3,10 +3,11 @@ services:
     image: postgres:16-alpine
     container_name: todo-saas-postgres
     restart: unless-stopped
+    env_file:
+      - ./deploy/pi.env
     environment:
       POSTGRES_DB: todo_saas
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,11 +23,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/todo_saas
-      JWT_SECRET: change-this-before-public-launch
-      CLIENT_ORIGIN: https://tasked.lol
-      PORT: 3001
+    env_file:
+      - ./deploy/pi.env
   web:
     build:
       context: .

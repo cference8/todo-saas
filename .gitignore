@@ -3,3 +3,4 @@ client/dist
 server/node_modules
 .env
 server/.env
+deploy/pi.env

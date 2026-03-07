@@ -69,7 +69,23 @@ Inside Docker, the API uses:
 postgres://postgres:postgres@postgres:5432/todo_saas
 ```
 
-Before public launch, change `JWT_SECRET` in [docker-compose.yml](/home/chris/Documents/todo-saas/docker-compose.yml) to a long random secret.
+Production secrets should live in a Pi-only file at `deploy/pi.env`, not in version-controlled YAML.
+
+Create it on the Pi from [pi.env.example](/home/chris/Documents/todo-saas/deploy/pi.env.example):
+
+```bash
+cp deploy/pi.env.example deploy/pi.env
+```
+
+Then edit `deploy/pi.env` and set:
+
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `CLIENT_ORIGIN`
+- `PORT`
+
+`deploy/pi.env` is ignored by git and should exist only on the server.
 
 ## Install
 
