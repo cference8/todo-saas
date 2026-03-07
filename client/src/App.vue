@@ -23,6 +23,7 @@ const pending = ref(false);
 const socketState = ref('closed');
 const lastEvent = ref('Sign in to load your workspace');
 const errorMessage = ref('');
+const authErrorMode = ref('');
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
 const inviteDetails = ref(null);
 let socket;
@@ -209,6 +210,7 @@ function connectSocket() {
 async function withPending(work) {
   pending.value = true;
   errorMessage.value = '';
+  authErrorMode.value = '';
   try {
     await work();
   } catch (error) {
@@ -221,6 +223,7 @@ async function withPending(work) {
 async function handleAuth(payload) {
   if (payload.mode === 'validation-error') {
     errorMessage.value = payload.error || 'Please fix the form errors and try again.';
+    authErrorMode.value = 'register';
     return;
   }
 
@@ -239,6 +242,10 @@ async function handleAuth(payload) {
     if (nextWorkspaceId) {
       await loadBootstrap();
       connectSocket();
+    }
+  }).finally(() => {
+    if (errorMessage.value) {
+      authErrorMode.value = payload.mode;
     }
   });
 }
@@ -417,7 +424,13 @@ onBeforeUnmount(() => {
 <template>
   <main class="app-shell">
     <template v-if="!isAuthenticated">
-      <AuthPanel :invite="inviteDetails" :error-message="errorMessage" :pending="pending" @submit="handleAuth" />
+      <AuthPanel
+        :invite="inviteDetails"
+        :error-message="errorMessage"
+        :error-for-mode="authErrorMode"
+        :pending="pending"
+        @submit="handleAuth"
+      />
     </template>
 
     <template v-else>

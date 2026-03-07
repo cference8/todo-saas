@@ -10,6 +10,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  errorForMode: {
+    type: String,
+    default: ''
+  },
   pending: {
     type: Boolean,
     default: false
@@ -25,6 +29,8 @@ const form = reactive({
   password: '',
   workspaceName: ''
 });
+
+const errorMode = ref('');
 
 watch(
   () => props.invite?.email,
@@ -46,10 +52,19 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => props.errorForMode,
+  (value) => {
+    errorMode.value = value || '';
+  },
+  { immediate: true }
+);
+
 function submit() {
   if (mode.value === 'register') {
     const trimmedName = form.name.trim();
     if (trimmedName.length < 2 || trimmedName.length > 60) {
+      errorMode.value = 'register';
       emit('submit', {
         mode: 'validation-error',
         error: 'Name must be between 2 and 60 characters.'
@@ -104,7 +119,7 @@ function submit() {
           type="text"
           placeholder="Workspace name"
         />
-        <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
+        <p v-if="errorMessage && (!errorMode || errorMode === mode)" class="form-error">{{ errorMessage }}</p>
         <button type="submit" :disabled="pending">{{ mode === 'login' ? (invite ? 'Continue to invite' : 'Enter workspace') : (invite ? 'Create account to continue' : 'Create account') }}</button>
       </form>
     </div>
