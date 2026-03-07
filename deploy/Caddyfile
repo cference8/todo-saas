@@ -1,3 +1,7 @@
+{
+  email chrislavigne.mn@gmail.com
+}
+
 tasked.lol, www.tasked.lol {
   tls {
     issuer acme {
