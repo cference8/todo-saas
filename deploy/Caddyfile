@@ -1,4 +1,10 @@
 tasked.lol, www.tasked.lol {
+  tls {
+    issuer acme {
+      ca https://acme.zerossl.com/v2/DV90
+    }
+  }
+
   encode zstd gzip
   root * /usr/share/caddy
   file_server
