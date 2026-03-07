@@ -2,7 +2,7 @@
   email chrislavigne.mn@gmail.com
 }
 
-tasked.lol, www.tasked.lol {
+tasked.lol {
   tls {
     issuer acme {
       dir https://acme.zerossl.com/v2/DV90
