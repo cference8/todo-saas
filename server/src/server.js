@@ -127,7 +127,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     const { user, workspace, workspaces } = await registerUser({ name, email, password, workspaceName, inviteToken });
     const token = issueAuthToken({ userId: user.id, email: user.email });
-    res.status(201).json({ token, user, workspaces, defaultWorkspaceId: workspace.id });
+    res.status(201).json({ token, user, workspaces, defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null });
   } catch (error) {
     sendError(res, error);
   }
@@ -137,13 +137,12 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const email = String(req.body.email || '').trim();
     const password = String(req.body.password || '');
-    const inviteToken = req.body.inviteToken ? String(req.body.inviteToken) : null;
     if (!email || !password) {
       res.status(400).json({ error: 'email and password are required.' });
       return;
     }
 
-    const authResult = await authenticateUser({ email, password, inviteToken });
+    const authResult = await authenticateUser({ email, password });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
     res.json({ token, user: authResult.user, workspaces: authResult.workspaces, defaultWorkspaceId: authResult.defaultWorkspaceId });
   } catch (error) {
@@ -178,6 +177,7 @@ app.get('/api/invites/:token', async (req, res) => {
       invite: {
         email: invite.email,
         role: invite.role,
+        hasAccount: invite.hasAccount,
         workspaceId: invite.workspaceId,
         workspaceName: invite.workspaceName,
         workspaceSlug: invite.workspaceSlug,

@@ -115,7 +115,7 @@ export async function registerUser({ name, email, password, workspaceName, invit
     await client.query('BEGIN');
 
     const normalizedEmail = email.toLowerCase();
-    const invite = inviteToken ? await getInviteRecordForUpdate(client, inviteToken) : null;
+    const invite = inviteToken ? await getInviteRecordForRegistration(client, inviteToken) : null;
 
     if (invite && invite.email !== normalizedEmail) {
       const error = new Error('This invite was issued for a different email address.');
@@ -139,31 +139,9 @@ export async function registerUser({ name, email, password, workspaceName, invit
     );
     const user = userResult.rows[0];
 
-    let workspace;
+    let workspace = null;
 
-    if (invite) {
-      await client.query(
-        `INSERT INTO workspace_members (workspace_id, user_id, role)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (workspace_id, user_id)
-         DO UPDATE SET role = EXCLUDED.role`,
-        [invite.workspaceId, user.id, invite.role]
-      );
-
-      await client.query(
-        `UPDATE workspace_invites
-         SET accepted_at = NOW(), accepted_by_user_id = $1
-         WHERE id = $2`,
-        [user.id, invite.id]
-      );
-
-      workspace = {
-        id: invite.workspaceId,
-        name: invite.workspaceName,
-        slug: invite.workspaceSlug,
-        createdAt: invite.workspaceCreatedAt
-      };
-    } else {
+    if (!invite) {
       const workspaceSlug = `${slugify(workspaceName)}-${String(user.id)}`;
       const workspaceResult = await client.query(
         `INSERT INTO workspaces (name, slug, created_by_user_id)
@@ -196,79 +174,38 @@ export async function registerUser({ name, email, password, workspaceName, invit
   }
 }
 
-export async function authenticateUser({ email, password, inviteToken = null }) {
-  const client = await pool.connect();
+export async function authenticateUser({ email, password }) {
+  const result = await pool.query(
+    `SELECT id, name, email, password_hash AS "passwordHash"
+     FROM users
+     WHERE email = $1`,
+    [email.toLowerCase()]
+  );
 
-  try {
-    let acceptedWorkspaceId = null;
-    const result = await pool.query(
-      `SELECT id, name, email, password_hash AS "passwordHash"
-       FROM users
-       WHERE email = $1`,
-      [email.toLowerCase()]
-    );
-
-    const user = result.rows[0];
-    if (!user) {
-      const error = new Error('Invalid email or password.');
-      error.status = 401;
-      throw error;
-    }
-
-    const valid = await verifyPassword(password, user.passwordHash);
-    if (!valid) {
-      const error = new Error('Invalid email or password.');
-      error.status = 401;
-      throw error;
-    }
-
-    if (inviteToken) {
-      await client.query('BEGIN');
-      const invite = await getInviteRecordForUpdate(client, inviteToken);
-      acceptedWorkspaceId = invite.workspaceId;
-
-      if (invite.email !== user.email) {
-        const error = new Error('This invite was issued for a different email address.');
-        error.status = 403;
-        throw error;
-      }
-
-      await client.query(
-        `INSERT INTO workspace_members (workspace_id, user_id, role)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (workspace_id, user_id)
-         DO UPDATE SET role = EXCLUDED.role`,
-        [invite.workspaceId, user.id, invite.role]
-      );
-
-      await client.query(
-        `UPDATE workspace_invites
-         SET accepted_at = NOW(), accepted_by_user_id = $1
-         WHERE id = $2`,
-        [user.id, invite.id]
-      );
-
-      await client.query('COMMIT');
-    }
-
-    const workspaces = await getUserWorkspaces(user.id);
-    return {
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email
-      },
-      workspaces,
-      defaultWorkspaceId: acceptedWorkspaceId
-        ? workspaces.find((workspace) => workspace.id === acceptedWorkspaceId)?.id ?? workspaces[0]?.id ?? null
-        : workspaces[0]?.id ?? null
-    };
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
+  const user = result.rows[0];
+  if (!user) {
+    const error = new Error('Invalid email or password.');
+    error.status = 401;
     throw error;
-  } finally {
-    client.release();
   }
+
+  const valid = await verifyPassword(password, user.passwordHash);
+  if (!valid) {
+    const error = new Error('Invalid email or password.');
+    error.status = 401;
+    throw error;
+  }
+
+  const workspaces = await getUserWorkspaces(user.id);
+  return {
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email
+    },
+    workspaces,
+    defaultWorkspaceId: workspaces[0]?.id ?? null
+  };
 }
 
 export async function getUserWorkspaces(userId) {
@@ -562,7 +499,12 @@ export async function getInviteByToken(inviteToken) {
             wi.created_at AS "createdAt",
             wi.expires_at AS "expiresAt",
             w.name AS "workspaceName",
-            w.slug AS "workspaceSlug"
+            w.slug AS "workspaceSlug",
+            EXISTS(
+              SELECT 1
+              FROM users u
+              WHERE u.email = wi.email
+            ) AS "hasAccount"
      FROM workspace_invites wi
      JOIN workspaces w ON w.id = wi.workspace_id
      WHERE wi.token_hash = $1
@@ -646,6 +588,33 @@ async function getInviteRecordForUpdate(client, inviteToken) {
   if (consumed.rows[0]?.acceptedAt) {
     const error = new Error('This invite has already been accepted.');
     error.status = 409;
+    throw error;
+  }
+
+  return invite;
+}
+
+async function getInviteRecordForRegistration(client, inviteToken) {
+  const result = await client.query(
+    `SELECT wi.id,
+            wi.email,
+            wi.role,
+            wi.workspace_id AS "workspaceId",
+            w.name AS "workspaceName",
+            w.slug AS "workspaceSlug",
+            w.created_at AS "workspaceCreatedAt"
+     FROM workspace_invites wi
+     JOIN workspaces w ON w.id = wi.workspace_id
+     WHERE wi.token_hash = $1
+       AND wi.accepted_at IS NULL
+       AND wi.expires_at > NOW()`,
+    [hashInviteToken(inviteToken)]
+  );
+
+  const invite = result.rows[0];
+  if (!invite) {
+    const error = new Error('Invite not found or expired.');
+    error.status = 404;
     throw error;
   }
 

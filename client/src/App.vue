@@ -49,6 +49,7 @@ const activeTasks = computed(() => {
 });
 const currentMembership = computed(() => memberships.value.find((item) => item.id === workspaceId.value) || null);
 const isAuthenticated = computed(() => Boolean(token.value));
+const hasWorkspace = computed(() => Boolean(workspaceId.value));
 
 async function request(path, options = {}) {
   const headers = {
@@ -79,9 +80,20 @@ async function request(path, options = {}) {
 
 function persistSession(nextToken, nextWorkspaceId) {
   token.value = nextToken;
-  workspaceId.value = Number(nextWorkspaceId);
+  workspaceId.value = nextWorkspaceId ? Number(nextWorkspaceId) : 0;
   localStorage.setItem(TOKEN_KEY, nextToken);
-  localStorage.setItem(WORKSPACE_KEY, String(nextWorkspaceId));
+  if (nextWorkspaceId) {
+    localStorage.setItem(WORKSPACE_KEY, String(nextWorkspaceId));
+  } else {
+    localStorage.removeItem(WORKSPACE_KEY);
+  }
+}
+
+function normalizeMemberships(items = []) {
+  return items.map((membership) => ({
+    ...membership,
+    id: Number(membership.id)
+  }));
 }
 
 function clearSession() {
@@ -111,7 +123,7 @@ function clearInviteState() {
 function applySnapshot(snapshot) {
   workspace.value = snapshot.workspace;
   currentUser.value = snapshot.currentUser;
-  memberships.value = snapshot.memberships || memberships.value;
+  memberships.value = normalizeMemberships(snapshot.memberships || memberships.value);
   members.value = snapshot.members || [];
   invites.value = snapshot.invites || [];
   lists.value = snapshot.lists || [];
@@ -209,12 +221,11 @@ async function handleAuth(payload) {
 
     const nextWorkspaceId = response.defaultWorkspaceId || response.workspaces?.[0]?.id;
     persistSession(response.token, nextWorkspaceId);
-    memberships.value = response.workspaces || [];
+    memberships.value = normalizeMemberships(response.workspaces || []);
     currentUser.value = response.user;
-    await loadBootstrap();
-    connectSocket();
-    if (payload.inviteToken) {
-      clearInviteState();
+    if (nextWorkspaceId) {
+      await loadBootstrap();
+      connectSocket();
     }
   });
 }
@@ -332,7 +343,7 @@ async function loadInvite() {
   }
 }
 
-async function acceptInviteWhileAuthenticated() {
+async function acceptInvite() {
   if (!inviteToken.value || !token.value) return;
 
   await withPending(async () => {
@@ -361,12 +372,6 @@ async function restoreSession() {
     return;
   }
 
-  if (inviteToken.value) {
-    acceptInviteWhileAuthenticated().catch((error) => {
-      errorMessage.value = error.message;
-      clearInviteState();
-    });
-  }
 }
 
 onMounted(() => {
@@ -388,8 +393,8 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="hero-bar panel">
         <div>
-          <p class="eyebrow">Authenticated workspace</p>
-          <h1>{{ workspace?.name || 'Team workspace' }}</h1>
+          <p class="eyebrow">{{ inviteDetails ? 'Workspace invitation' : 'Authenticated workspace' }}</p>
+          <h1>{{ inviteDetails?.workspaceName || workspace?.name || 'Team workspace' }}</h1>
         </div>
         <div class="hero-meta">
           <span>{{ currentUser?.name || 'Unknown user' }}</span>
@@ -399,7 +404,16 @@ onBeforeUnmount(() => {
 
       <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
-      <section class="layout-grid three-up">
+      <section v-if="inviteDetails" class="panel invite-accept-panel">
+        <div>
+          <p class="eyebrow">Pending invite</p>
+          <h2>Join {{ inviteDetails.workspaceName }}</h2>
+          <p class="subtle">Signed in as {{ currentUser?.email }}. Accept the invite to join this workspace.</p>
+        </div>
+        <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
+      </section>
+
+      <section v-if="hasWorkspace" class="layout-grid three-up">
         <WorkspaceSidebar
           :current-list-id="activeListId || 0"
           :lists="lists"

@@ -32,10 +32,20 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => props.invite?.hasAccount,
+  (hasAccount) => {
+    if (props.invite) {
+      mode.value = hasAccount ? 'login' : 'register';
+    }
+  },
+  { immediate: true }
+);
+
 function submit() {
   emit('submit', {
     mode: mode.value,
-    inviteToken: props.invite?.token || null,
+    inviteToken: mode.value === 'register' ? props.invite?.token || null : null,
     ...form
   });
 }
@@ -57,8 +67,22 @@ function submit() {
 
     <div class="auth-card">
       <div class="auth-toggle">
-        <button type="button" :class="{ active: mode === 'login' }" @click="mode = 'login'">Login</button>
-        <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">Register</button>
+        <button
+          v-if="!invite || invite.hasAccount"
+          type="button"
+          :class="{ active: mode === 'login' }"
+          @click="mode = 'login'"
+        >
+          Login
+        </button>
+        <button
+          v-if="!invite || !invite.hasAccount"
+          type="button"
+          :class="{ active: mode === 'register' }"
+          @click="mode = 'register'"
+        >
+          Register
+        </button>
       </div>
 
       <form class="auth-form" @submit.prevent="submit">
@@ -71,7 +95,10 @@ function submit() {
           type="text"
           placeholder="Workspace name"
         />
-        <button type="submit" :disabled="pending">{{ mode === 'login' ? (invite ? 'Accept invite' : 'Enter workspace') : (invite ? 'Create account and join' : 'Create account') }}</button>
+        <p v-if="invite" class="subtle">
+          {{ invite.hasAccount ? 'Sign in first, then you will be asked to accept the invite.' : 'Create the account first, then you will be asked to accept the invite.' }}
+        </p>
+        <button type="submit" :disabled="pending">{{ mode === 'login' ? (invite ? 'Continue to invite' : 'Enter workspace') : (invite ? 'Create account to continue' : 'Create account') }}</button>
       </form>
     </div>
   </section>
