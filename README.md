@@ -1,4 +1,4 @@
-# Todo SaaS
+# Todo SaaS / Task List
 
 This app has been upgraded from the original static/Firebase todo into a Vue + Node SaaS foundation with:
 
