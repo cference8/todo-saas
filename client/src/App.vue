@@ -14,6 +14,7 @@ const workspace = ref(null);
 const lists = ref([]);
 const tasks = ref([]);
 const members = ref([]);
+const invites = ref([]);
 const memberships = ref([]);
 const activeListId = ref(null);
 const currentUser = ref(null);
@@ -21,6 +22,8 @@ const pending = ref(false);
 const socketState = ref('closed');
 const lastEvent = ref('Sign in to load your workspace');
 const errorMessage = ref('');
+const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
+const inviteDetails = ref(null);
 let socket;
 let reconnectTimer;
 let allowReconnect = true;
@@ -88,6 +91,7 @@ function clearSession() {
   lists.value = [];
   tasks.value = [];
   members.value = [];
+  invites.value = [];
   memberships.value = [];
   currentUser.value = null;
   activeListId.value = null;
@@ -96,11 +100,20 @@ function clearSession() {
   disconnectSocket();
 }
 
+function clearInviteState() {
+  inviteToken.value = '';
+  inviteDetails.value = null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('invite');
+  window.history.replaceState({}, '', url);
+}
+
 function applySnapshot(snapshot) {
   workspace.value = snapshot.workspace;
   currentUser.value = snapshot.currentUser;
   memberships.value = snapshot.memberships || memberships.value;
   members.value = snapshot.members || [];
+  invites.value = snapshot.invites || [];
   lists.value = snapshot.lists || [];
   tasks.value = snapshot.tasks || [];
 
@@ -200,6 +213,9 @@ async function handleAuth(payload) {
     currentUser.value = response.user;
     await loadBootstrap();
     connectSocket();
+    if (payload.inviteToken) {
+      clearInviteState();
+    }
   });
 }
 
@@ -288,13 +304,48 @@ async function deleteTask(taskId) {
   });
 }
 
-async function addMember(email) {
+async function createInvite(email, onCreated) {
   await withPending(async () => {
-    await request('/api/members', {
+    const response = await request('/api/invites', {
       method: 'POST',
       body: JSON.stringify({ workspaceId: workspaceId.value, email })
     });
+    if (typeof onCreated === 'function') {
+      onCreated(response.invite.inviteUrl);
+    }
     await loadBootstrap();
+  });
+}
+
+async function loadInvite() {
+  if (!inviteToken.value) return;
+
+  try {
+    const response = await request(`/api/invites/${inviteToken.value}`, { headers: {} });
+    inviteDetails.value = {
+      ...response.invite,
+      token: inviteToken.value
+    };
+  } catch (error) {
+    errorMessage.value = error.message;
+    clearInviteState();
+  }
+}
+
+async function acceptInviteWhileAuthenticated() {
+  if (!inviteToken.value || !token.value) return;
+
+  await withPending(async () => {
+    const response = await request('/api/invites/accept', {
+      method: 'POST',
+      body: JSON.stringify({ inviteToken: inviteToken.value })
+    });
+
+    workspaceId.value = Number(response.workspaceId);
+    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
+    await loadBootstrap();
+    connectSocket();
+    clearInviteState();
   });
 }
 
@@ -307,10 +358,19 @@ async function restoreSession() {
   } catch (error) {
     errorMessage.value = error.message;
     clearSession();
+    return;
+  }
+
+  if (inviteToken.value) {
+    acceptInviteWhileAuthenticated().catch((error) => {
+      errorMessage.value = error.message;
+      clearInviteState();
+    });
   }
 }
 
 onMounted(() => {
+  loadInvite();
   restoreSession();
 });
 
@@ -322,7 +382,7 @@ onBeforeUnmount(() => {
 <template>
   <main class="app-shell">
     <template v-if="!isAuthenticated">
-      <AuthPanel @submit="handleAuth" />
+      <AuthPanel :invite="inviteDetails" :pending="pending" @submit="handleAuth" />
     </template>
 
     <template v-else>
@@ -365,10 +425,11 @@ onBeforeUnmount(() => {
 
         <MemberPanel
           :current-user="currentUser"
+          :invites="invites"
           :members="members"
           :role="currentMembership?.role || 'member'"
           :pending="pending"
-          @add-member="addMember"
+          @create-invite="createInvite"
           @logout="clearSession"
         />
       </section>

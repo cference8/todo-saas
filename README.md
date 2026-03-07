@@ -170,12 +170,12 @@ npm run dev
 
 - Register creates a user account and a first workspace
 - Login returns all workspaces the user belongs to
-- Owners can add existing registered users to the current workspace by email
+- Owners can generate invite links for email addresses from the current workspace
+- Invite links can be accepted by an existing account with the invited email, or by registering a new account for that email
 - The selected workspace determines API scope and WebSocket broadcasts
 
 ## Next logical upgrades
 
-- Email-based invitations instead of add-by-email for existing users only
 - Role management beyond `owner` and `member`
 - Password reset and email verification
 - Billing, organizations, and audit logs

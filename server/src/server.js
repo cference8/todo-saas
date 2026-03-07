@@ -7,13 +7,15 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { issueAuthToken, verifyAuthToken } from './auth.js';
 import {
-  addWorkspaceMember,
+  acceptInviteForUser,
   authenticateUser,
   createList,
   createTask,
+  createWorkspaceInvite,
   deleteList,
   deleteTask,
   ensureMembership,
+  getInviteByToken,
   getSnapshot,
   initDb,
   registerUser,
@@ -116,13 +118,14 @@ app.post('/api/auth/register', async (req, res) => {
     const email = String(req.body.email || '').trim();
     const password = String(req.body.password || '');
     const workspaceName = String(req.body.workspaceName || '').trim();
+    const inviteToken = req.body.inviteToken ? String(req.body.inviteToken) : null;
 
-    if (!name || !email || !password || !workspaceName) {
-      res.status(400).json({ error: 'name, email, password, and workspaceName are required.' });
+    if (!name || !email || !password || (!inviteToken && !workspaceName)) {
+      res.status(400).json({ error: 'name, email, password, and workspaceName are required unless joining by invite.' });
       return;
     }
 
-    const { user, workspace, workspaces } = await registerUser({ name, email, password, workspaceName });
+    const { user, workspace, workspaces } = await registerUser({ name, email, password, workspaceName, inviteToken });
     const token = issueAuthToken({ userId: user.id, email: user.email });
     res.status(201).json({ token, user, workspaces, defaultWorkspaceId: workspace.id });
   } catch (error) {
@@ -134,12 +137,13 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const email = String(req.body.email || '').trim();
     const password = String(req.body.password || '');
+    const inviteToken = req.body.inviteToken ? String(req.body.inviteToken) : null;
     if (!email || !password) {
       res.status(400).json({ error: 'email and password are required.' });
       return;
     }
 
-    const authResult = await authenticateUser({ email, password });
+    const authResult = await authenticateUser({ email, password, inviteToken });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
     res.json({ token, user: authResult.user, workspaces: authResult.workspaces, defaultWorkspaceId: authResult.defaultWorkspaceId });
   } catch (error) {
@@ -162,10 +166,33 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/members', requireAuth, requireWorkspace, async (req, res) => {
+app.get('/api/invites/:token', async (req, res) => {
+  try {
+    const invite = await getInviteByToken(String(req.params.token || ''));
+    if (!invite) {
+      res.status(404).json({ error: 'Invite not found or expired.' });
+      return;
+    }
+
+    res.json({
+      invite: {
+        email: invite.email,
+        role: invite.role,
+        workspaceId: invite.workspaceId,
+        workspaceName: invite.workspaceName,
+        workspaceSlug: invite.workspaceSlug,
+        expiresAt: invite.expiresAt
+      }
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
   try {
     if (req.membership.role !== 'owner') {
-      res.status(403).json({ error: 'Only workspace owners can add members.' });
+      res.status(403).json({ error: 'Only workspace owners can create invites.' });
       return;
     }
 
@@ -175,9 +202,42 @@ app.post('/api/members', requireAuth, requireWorkspace, async (req, res) => {
       return;
     }
 
-    const member = await addWorkspaceMember({ workspaceId: req.workspaceId, email });
-    broadcastToWorkspace(req.workspaceId, 'member.added', { email: member.email });
-    res.status(201).json({ member });
+    const invite = await createWorkspaceInvite({ workspaceId: req.workspaceId, userId: req.auth.userId, email });
+    const baseUrl = String(req.headers.origin || process.env.CLIENT_ORIGIN || clientOrigin);
+    const inviteUrl = new URL(baseUrl);
+    inviteUrl.searchParams.set('invite', invite.token);
+
+    broadcastToWorkspace(req.workspaceId, 'invite.created', { email: invite.email });
+    res.status(201).json({
+      invite: {
+        id: invite.id,
+        email: invite.email,
+        role: invite.role,
+        createdAt: invite.createdAt,
+        expiresAt: invite.expiresAt,
+        inviteUrl: inviteUrl.toString()
+      }
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/invites/accept', requireAuth, async (req, res) => {
+  try {
+    const inviteToken = String(req.body.inviteToken || '').trim();
+    if (!inviteToken) {
+      res.status(400).json({ error: 'inviteToken is required.' });
+      return;
+    }
+
+    const workspaceId = await acceptInviteForUser({
+      inviteToken,
+      userId: req.auth.userId,
+      email: req.auth.email
+    });
+
+    res.status(201).json({ workspaceId });
   } catch (error) {
     sendError(res, error);
   }

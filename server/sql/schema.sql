@@ -43,3 +43,16 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS workspace_invites (
+  id BIGSERIAL PRIMARY KEY,
+  workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  token_hash TEXT NOT NULL UNIQUE,
+  invited_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  accepted_at TIMESTAMPTZ,
+  accepted_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

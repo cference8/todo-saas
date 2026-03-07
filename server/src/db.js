@@ -1,9 +1,11 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import { Pool } from 'pg';
 import { hashPassword, verifyPassword } from './auth.js';
 
 const connectionString = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/todo_saas';
 const pool = new Pool({ connectionString });
+const INVITE_TTL_DAYS = 7;
 
 function fmt(value) {
   return value ? new Date(value).toLocaleString() : null;
@@ -78,15 +80,50 @@ export async function initDb() {
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium';
     UPDATE tasks SET priority = 'medium' WHERE priority IS NULL OR priority NOT IN ('low', 'medium', 'high');
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspace_invites (
+      id BIGSERIAL PRIMARY KEY,
+      workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      token_hash TEXT NOT NULL UNIQUE,
+      invited_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      accepted_at TIMESTAMPTZ,
+      accepted_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace_id ON workspace_invites(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites(email);
+  `);
 }
 
-export async function registerUser({ name, email, password, workspaceName }) {
+function hashInviteToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function issueInviteToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+export async function registerUser({ name, email, password, workspaceName, inviteToken = null }) {
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    const existing = await client.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    const normalizedEmail = email.toLowerCase();
+    const invite = inviteToken ? await getInviteRecordForUpdate(client, inviteToken) : null;
+
+    if (invite && invite.email !== normalizedEmail) {
+      const error = new Error('This invite was issued for a different email address.');
+      error.status = 403;
+      throw error;
+    }
+
+    const existing = await client.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
     if (existing.rowCount) {
       const error = new Error('An account with this email already exists.');
       error.status = 409;
@@ -98,33 +135,59 @@ export async function registerUser({ name, email, password, workspaceName }) {
       `INSERT INTO users (name, email, password_hash)
        VALUES ($1, $2, $3)
        RETURNING id, name, email, created_at AS "createdAt"`,
-      [name.trim(), email.toLowerCase(), passwordHash]
+      [name.trim(), normalizedEmail, passwordHash]
     );
     const user = userResult.rows[0];
 
-    const workspaceSlug = `${slugify(workspaceName)}-${String(user.id)}`;
-    const workspaceResult = await client.query(
-      `INSERT INTO workspaces (name, slug, created_by_user_id)
-       VALUES ($1, $2, $3)
-       RETURNING id, name, slug, created_at AS "createdAt"`,
-      [workspaceName.trim(), workspaceSlug, user.id]
-    );
-    const workspace = workspaceResult.rows[0];
+    let workspace;
 
-    await client.query(
-      `INSERT INTO workspace_members (workspace_id, user_id, role)
-       VALUES ($1, $2, 'owner')`,
-      [workspace.id, user.id]
-    );
+    if (invite) {
+      await client.query(
+        `INSERT INTO workspace_members (workspace_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (workspace_id, user_id)
+         DO UPDATE SET role = EXCLUDED.role`,
+        [invite.workspaceId, user.id, invite.role]
+      );
 
-    await client.query(
-      `INSERT INTO lists (workspace_id, name, created_by_user_id)
-       VALUES ($1, 'General', $2), ($1, 'Product Ideas', $2)`,
-      [workspace.id, user.id]
-    );
+      await client.query(
+        `UPDATE workspace_invites
+         SET accepted_at = NOW(), accepted_by_user_id = $1
+         WHERE id = $2`,
+        [user.id, invite.id]
+      );
+
+      workspace = {
+        id: invite.workspaceId,
+        name: invite.workspaceName,
+        slug: invite.workspaceSlug,
+        createdAt: invite.workspaceCreatedAt
+      };
+    } else {
+      const workspaceSlug = `${slugify(workspaceName)}-${String(user.id)}`;
+      const workspaceResult = await client.query(
+        `INSERT INTO workspaces (name, slug, created_by_user_id)
+         VALUES ($1, $2, $3)
+         RETURNING id, name, slug, created_at AS "createdAt"`,
+        [workspaceName.trim(), workspaceSlug, user.id]
+      );
+      workspace = workspaceResult.rows[0];
+
+      await client.query(
+        `INSERT INTO workspace_members (workspace_id, user_id, role)
+         VALUES ($1, $2, 'owner')`,
+        [workspace.id, user.id]
+      );
+
+      await client.query(
+        `INSERT INTO lists (workspace_id, name, created_by_user_id)
+         VALUES ($1, 'General', $2), ($1, 'Product Ideas', $2)`,
+        [workspace.id, user.id]
+      );
+    }
 
     await client.query('COMMIT');
-    return { user, workspace, workspaces: [{ ...workspace, role: 'owner' }] };
+    return { user, workspace, workspaces: await getUserWorkspaces(user.id) };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -133,38 +196,79 @@ export async function registerUser({ name, email, password, workspaceName }) {
   }
 }
 
-export async function authenticateUser({ email, password }) {
-  const result = await pool.query(
-    `SELECT id, name, email, password_hash AS "passwordHash"
-     FROM users
-     WHERE email = $1`,
-    [email.toLowerCase()]
-  );
+export async function authenticateUser({ email, password, inviteToken = null }) {
+  const client = await pool.connect();
 
-  const user = result.rows[0];
-  if (!user) {
-    const error = new Error('Invalid email or password.');
-    error.status = 401;
+  try {
+    let acceptedWorkspaceId = null;
+    const result = await pool.query(
+      `SELECT id, name, email, password_hash AS "passwordHash"
+       FROM users
+       WHERE email = $1`,
+      [email.toLowerCase()]
+    );
+
+    const user = result.rows[0];
+    if (!user) {
+      const error = new Error('Invalid email or password.');
+      error.status = 401;
+      throw error;
+    }
+
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) {
+      const error = new Error('Invalid email or password.');
+      error.status = 401;
+      throw error;
+    }
+
+    if (inviteToken) {
+      await client.query('BEGIN');
+      const invite = await getInviteRecordForUpdate(client, inviteToken);
+      acceptedWorkspaceId = invite.workspaceId;
+
+      if (invite.email !== user.email) {
+        const error = new Error('This invite was issued for a different email address.');
+        error.status = 403;
+        throw error;
+      }
+
+      await client.query(
+        `INSERT INTO workspace_members (workspace_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (workspace_id, user_id)
+         DO UPDATE SET role = EXCLUDED.role`,
+        [invite.workspaceId, user.id, invite.role]
+      );
+
+      await client.query(
+        `UPDATE workspace_invites
+         SET accepted_at = NOW(), accepted_by_user_id = $1
+         WHERE id = $2`,
+        [user.id, invite.id]
+      );
+
+      await client.query('COMMIT');
+    }
+
+    const workspaces = await getUserWorkspaces(user.id);
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email
+      },
+      workspaces,
+      defaultWorkspaceId: acceptedWorkspaceId
+        ? workspaces.find((workspace) => workspace.id === acceptedWorkspaceId)?.id ?? workspaces[0]?.id ?? null
+        : workspaces[0]?.id ?? null
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     throw error;
+  } finally {
+    client.release();
   }
-
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) {
-    const error = new Error('Invalid email or password.');
-    error.status = 401;
-    throw error;
-  }
-
-  const workspaces = await getUserWorkspaces(user.id);
-  return {
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email
-    },
-    workspaces,
-    defaultWorkspaceId: workspaces[0]?.id ?? null
-  };
 }
 
 export async function getUserWorkspaces(userId) {
@@ -191,6 +295,25 @@ export async function getWorkspaceMembers(workspaceId) {
   return result.rows;
 }
 
+export async function getWorkspaceInvites(workspaceId) {
+  const result = await pool.query(
+    `SELECT wi.id,
+            wi.email,
+            wi.role,
+            wi.created_at AS "createdAt",
+            wi.expires_at AS "expiresAt",
+            inviter.name AS "invitedByName"
+     FROM workspace_invites wi
+     LEFT JOIN users inviter ON inviter.id = wi.invited_by_user_id
+     WHERE wi.workspace_id = $1
+       AND wi.accepted_at IS NULL
+       AND wi.expires_at > NOW()
+     ORDER BY wi.created_at DESC`,
+    [workspaceId]
+  );
+  return result.rows;
+}
+
 export async function ensureMembership(userId, workspaceId) {
   const result = await pool.query(
     `SELECT wm.role, w.name, w.slug
@@ -211,7 +334,7 @@ export async function getSnapshot({ userId, workspaceId }) {
     throw error;
   }
 
-  const [workspaceResult, userResult, memberships, listsResult, tasksResult, members] = await Promise.all([
+  const [workspaceResult, userResult, memberships, listsResult, tasksResult, members, invites] = await Promise.all([
     pool.query(
       `SELECT id, name, slug, created_at AS "createdAt"
        FROM workspaces
@@ -254,7 +377,8 @@ export async function getSnapshot({ userId, workspaceId }) {
        ORDER BY t.id DESC`,
       [workspaceId]
     ),
-    getWorkspaceMembers(workspaceId)
+    getWorkspaceMembers(workspaceId),
+    getWorkspaceInvites(workspaceId)
   ]);
 
   return {
@@ -262,6 +386,7 @@ export async function getSnapshot({ userId, workspaceId }) {
     currentUser: userResult.rows[0],
     memberships,
     members,
+    invites,
     lists: listsResult.rows,
     tasks: tasksResult.rows.map((task) => ({
       ...task,
@@ -385,4 +510,144 @@ export async function addWorkspaceMember({ workspaceId, email, role = 'member' }
   );
 
   return user;
+}
+
+export async function createWorkspaceInvite({ workspaceId, userId, email, role = 'member' }) {
+  const normalizedEmail = email.toLowerCase();
+  const token = issueInviteToken();
+  const tokenHash = hashInviteToken(token);
+
+  const [membershipResult, workspaceResult] = await Promise.all([
+    pool.query(
+      `SELECT 1
+       FROM workspace_members wm
+       JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = $1 AND u.email = $2`,
+      [workspaceId, normalizedEmail]
+    ),
+    pool.query(
+      `SELECT id, name, slug
+       FROM workspaces
+       WHERE id = $1`,
+      [workspaceId]
+    )
+  ]);
+
+  if (membershipResult.rowCount) {
+    const error = new Error('That user is already a member of this workspace.');
+    error.status = 409;
+    throw error;
+  }
+
+  const result = await pool.query(
+    `INSERT INTO workspace_invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at)
+     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 * INTERVAL '1 day'))
+     RETURNING id, email, role, created_at AS "createdAt", expires_at AS "expiresAt"`,
+    [workspaceId, normalizedEmail, role, tokenHash, userId, INVITE_TTL_DAYS]
+  );
+
+  return {
+    ...result.rows[0],
+    workspace: workspaceResult.rows[0],
+    token
+  };
+}
+
+export async function getInviteByToken(inviteToken) {
+  const invite = await pool.query(
+    `SELECT wi.id,
+            wi.email,
+            wi.role,
+            wi.workspace_id AS "workspaceId",
+            wi.created_at AS "createdAt",
+            wi.expires_at AS "expiresAt",
+            w.name AS "workspaceName",
+            w.slug AS "workspaceSlug"
+     FROM workspace_invites wi
+     JOIN workspaces w ON w.id = wi.workspace_id
+     WHERE wi.token_hash = $1
+       AND wi.accepted_at IS NULL
+       AND wi.expires_at > NOW()`,
+    [hashInviteToken(inviteToken)]
+  );
+
+  return invite.rows[0] || null;
+}
+
+export async function acceptInviteForUser({ inviteToken, userId, email }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const invite = await getInviteRecordForUpdate(client, inviteToken);
+
+    if (invite.email !== email.toLowerCase()) {
+      const error = new Error('This invite was issued for a different email address.');
+      error.status = 403;
+      throw error;
+    }
+
+    await client.query(
+      `INSERT INTO workspace_members (workspace_id, user_id, role)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (workspace_id, user_id)
+       DO UPDATE SET role = EXCLUDED.role`,
+      [invite.workspaceId, userId, invite.role]
+    );
+
+    await client.query(
+      `UPDATE workspace_invites
+       SET accepted_at = NOW(), accepted_by_user_id = $1
+       WHERE id = $2`,
+      [userId, invite.id]
+    );
+
+    await client.query('COMMIT');
+    return invite.workspaceId;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getInviteRecordForUpdate(client, inviteToken) {
+  const result = await client.query(
+    `SELECT wi.id,
+            wi.email,
+            wi.role,
+            wi.workspace_id AS "workspaceId",
+            wi.expires_at AS "expiresAt",
+            w.name AS "workspaceName",
+            w.slug AS "workspaceSlug",
+            w.created_at AS "workspaceCreatedAt"
+     FROM workspace_invites wi
+     JOIN workspaces w ON w.id = wi.workspace_id
+     WHERE wi.token_hash = $1
+     FOR UPDATE`,
+    [hashInviteToken(inviteToken)]
+  );
+
+  const invite = result.rows[0];
+  if (!invite || invite.expiresAt <= new Date()) {
+    const error = new Error('Invite not found or expired.');
+    error.status = 404;
+    throw error;
+  }
+
+  const consumed = await client.query(
+    `SELECT accepted_at AS "acceptedAt"
+     FROM workspace_invites
+     WHERE id = $1`,
+    [invite.id]
+  );
+
+  if (consumed.rows[0]?.acceptedAt) {
+    const error = new Error('This invite has already been accepted.');
+    error.status = 409;
+    throw error;
+  }
+
+  return invite;
 }
