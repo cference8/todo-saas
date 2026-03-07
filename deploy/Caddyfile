@@ -1,0 +1,18 @@
+tasked.lol, www.tasked.lol {
+  encode zstd gzip
+  root * /usr/share/caddy
+  file_server
+
+  handle /api/* {
+    reverse_proxy api:3001
+  }
+
+  handle /ws* {
+    reverse_proxy api:3001
+  }
+
+  handle {
+    try_files {path} /index.html
+    file_server
+  }
+}

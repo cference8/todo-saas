@@ -4,6 +4,7 @@ This app has been upgraded from the original static/Firebase todo into a Vue + N
 
 - Vue 3 frontend via Vite
 - Express API
+- Caddy reverse proxy for production HTTPS
 - Postgres database
 - JWT authentication
 - Multi-user workspaces and workspace membership
@@ -13,48 +14,40 @@ This app has been upgraded from the original static/Firebase todo into a Vue + N
 
 - `client/`: Vue application
 - `server/`: Express + WebSocket API
+- `deploy/Caddyfile`: public reverse proxy and TLS config
+- `deploy/Caddy.Dockerfile`: production web image that builds the Vue app
 - `server/sql/schema.sql`: Postgres schema reference
 - `server/.env.example`: required backend environment variables
-
-## Backend requirements
-
-You need a running Postgres database. The fastest local option is Docker Compose.
 
 ## One-command startup
 
 From the project root:
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
 That starts:
 
-- Postgres on `localhost:5432`
-- API server on `localhost:3011`
-- Vue client on `localhost:5173`
+- Postgres on the internal Docker network
+- API server on the internal Docker network
+- Caddy on public ports `80` and `443`
 
 Open:
 
 ```text
-http://localhost:5173
+https://tasked.lol
 ```
 
-The client proxies API and WebSocket traffic to the backend container automatically.
+Caddy serves the built Vue app, terminates HTTPS, and proxies API and WebSocket traffic to the backend container.
 
-## Docker services
+## DNS and Router Setup
 
-If you only want the database, you can still run just Postgres:
-
-```bash
-docker compose up -d postgres
-```
-
-The Postgres container uses:
-
-- database: `todo_saas`
-- user: `postgres`
-- password: `postgres`
+- Point `tasked.lol` and optionally `www.tasked.lol` to your home public IP with `A` records.
+- Forward router ports:
+  - external `80` -> Pi `80`
+  - external `443` -> Pi `443`
+- Keep ports `3001`, `5173`, and `5432` private.
 
 To stop it:
 
@@ -70,15 +63,13 @@ docker compose down -v
 
 ## Backend environment
 
-Default local connection string:
+Inside Docker, the API uses:
 
 ```bash
-postgres://postgres:postgres@localhost:5432/todo_saas
+postgres://postgres:postgres@postgres:5432/todo_saas
 ```
 
-Create a `.env` file in `server/` based on `.env.example` only if you want to run the backend outside Docker.
-
-If port `3001` is already in use on your machine, change `PORT` in `server/.env` to another port such as `3011`.
+Before public launch, change `JWT_SECRET` in [docker-compose.yml](/home/chris/Documents/todo-saas/docker-compose.yml) to a long random secret.
 
 ## Install
 
@@ -87,7 +78,7 @@ cd client && npm install
 cd ../server && npm install
 ```
 
-## Local development without Docker for app services
+## Local development without Docker
 
 Run the server:
 
@@ -101,12 +92,6 @@ Run the client in another terminal:
 ```bash
 cd client
 npm run dev
-```
-
-If the backend is not running on `3001`, start the client with a matching proxy target:
-
-```bash
-VITE_API_TARGET=http://localhost:3011 npm run dev
 ```
 
 ## Auth flow

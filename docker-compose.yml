@@ -7,8 +7,6 @@ services:
       POSTGRES_DB: todo_saas
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,28 +24,20 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/todo_saas
-      JWT_SECRET: replace-with-a-long-random-secret
-      CLIENT_ORIGIN: http://localhost:5173
+      JWT_SECRET: change-this-before-public-launch
+      CLIENT_ORIGIN: https://tasked.lol
       PORT: 3001
-    ports:
-      - "3011:3001"
-    volumes:
-      - ./server:/app
-      - /app/node_modules
-  client:
+  web:
     build:
-      context: ./client
-    container_name: todo-saas-client
+      context: .
+      dockerfile: deploy/Caddy.Dockerfile
+    container_name: todo-saas-web
     restart: unless-stopped
     depends_on:
       - api
-    environment:
-      VITE_API_TARGET: http://api:3001
     ports:
-      - "5173:5173"
-    volumes:
-      - ./client:/app
-      - /app/node_modules
+      - "80:80"
+      - "443:443"
 
 volumes:
   postgres_data:
