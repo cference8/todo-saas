@@ -105,6 +105,12 @@ button {
   padding: 1.2rem;
 }
 
+.member-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .sidebar-header,
 .task-header,
 .member-header {
@@ -112,6 +118,16 @@ button {
   justify-content: space-between;
   gap: 1rem;
   align-items: start;
+}
+
+.member-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.member-header > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 
 .workspace-switcher-label {
@@ -153,6 +169,10 @@ textarea {
   margin-top: 1.2rem;
 }
 
+.member-list {
+  margin-top: 0;
+}
+
 .list-card,
 .member-row {
   border: 1px solid transparent;
@@ -163,6 +183,12 @@ textarea {
   justify-content: space-between;
   align-items: center;
   gap: 0.75rem;
+}
+
+.member-row {
+  align-items: flex-start;
+  padding: 1.05rem 1rem;
+  min-width: 0;
 }
 
 .list-card:hover {
@@ -178,6 +204,42 @@ textarea {
 .member-row span {
   display: flex;
   flex-direction: column;
+}
+
+.member-row span {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-row strong {
+  font-size: 0.95rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.member-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-row small:last-child {
+  align-self: center;
+  font-size: 0.95rem;
+  text-transform: lowercase;
+  flex: 0 0 auto;
+}
+
+.member-role {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(94, 170, 247, 0.12);
+  color: #4d6980;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .list-card-main {
@@ -218,6 +280,11 @@ textarea {
   gap: 0.75rem;
 }
 
+.invite-form,
+.invite-link-card {
+  margin-top: auto;
+}
+
 .composer {
   margin: 1.25rem 0;
 }
@@ -236,6 +303,7 @@ textarea {
 .icon-button,
 .auth-form button,
 .invite-form button,
+.invite-link-card button,
 .auth-toggle button {
   border: 0;
   border-radius: 16px;
@@ -245,6 +313,7 @@ textarea {
 .ghost-button,
 .auth-form button,
 .invite-form button,
+.invite-link-card button,
 .auth-toggle button.active {
   background: var(--accent);
   color: white;
@@ -254,7 +323,8 @@ textarea {
 .composer button:hover,
 .ghost-button:hover,
 .auth-form button:hover,
-.invite-form button:hover {
+.invite-form button:hover,
+.invite-link-card button:hover {
   background: var(--accent-dark);
 }
 
@@ -266,6 +336,14 @@ textarea {
 
 .ghost-danger {
   padding: 0.65rem 0.9rem;
+}
+
+.member-header .ghost-danger {
+  min-height: 44px;
+  padding: 0 1rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .icon-button {
@@ -392,6 +470,11 @@ textarea {
 
 .invite-link-card {
   margin-top: 1rem;
+}
+
+.member-panel .invite-form input,
+.member-panel .invite-link-card input {
+  min-height: 56px;
 }
 
 .status-pill {

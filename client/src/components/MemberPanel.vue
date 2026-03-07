@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue';
 
+const EMAIL_PREVIEW_LIMIT = 17;
+
 const props = defineProps({
   currentUser: {
     type: Object,
@@ -42,6 +44,11 @@ async function copyLatestInvite() {
   if (!lastInviteUrl.value) return;
   await navigator.clipboard.writeText(lastInviteUrl.value);
 }
+
+function formatEmailPreview(email) {
+  const value = String(email || '');
+  return value.length > EMAIL_PREVIEW_LIMIT ? `${value.slice(0, EMAIL_PREVIEW_LIMIT)}...` : value;
+}
 </script>
 
 <template>
@@ -59,9 +66,9 @@ async function copyLatestInvite() {
       <div v-for="member in members" :key="member.id" class="member-row">
         <span>
           <strong>{{ member.name }}</strong>
-          <small>{{ member.email }}</small>
+          <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
         </span>
-        <small>{{ member.role }}</small>
+        <small class="member-role">{{ member.role }}</small>
       </div>
     </div>
 
@@ -80,9 +87,9 @@ async function copyLatestInvite() {
       <div v-for="invite in invites" :key="invite.id" class="member-row">
         <span>
           <strong>{{ invite.email }}</strong>
-          <small>Pending invite • expires {{ new Date(invite.expiresAt).toLocaleString() }}</small>
+          <small class="member-email">Pending invite • expires {{ new Date(invite.expiresAt).toLocaleString() }}</small>
         </span>
-        <small>{{ invite.role }}</small>
+        <small class="member-role">{{ invite.role }}</small>
       </div>
     </div>
   </aside>
