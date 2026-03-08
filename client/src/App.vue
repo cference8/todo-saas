@@ -823,6 +823,15 @@ onBeforeUnmount(() => {
         <div class="hero-meta">
           <span>{{ currentUser?.name || 'Unknown user' }}</span>
           <span>{{ lastEvent }}</span>
+          <button
+            v-if="!hasWorkspace"
+            type="button"
+            class="ghost-danger hero-meta-logout"
+            :disabled="pending"
+            @click="clearSession"
+          >
+            Logout
+          </button>
         </div>
       </section>
 

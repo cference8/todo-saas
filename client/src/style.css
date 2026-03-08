@@ -329,10 +329,25 @@ textarea::placeholder {
 
 .hero-meta {
   display: flex;
-  gap: 1rem;
+  align-items: center;
+  justify-content: flex-end;
+  column-gap: 1.25rem;
+  row-gap: 0.65rem;
   flex-wrap: wrap;
   color: var(--text-soft);
   font-size: 0.95rem;
+}
+
+.hero-meta span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hero-meta-logout {
+  min-height: 42px;
+  padding: 0 1rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
 }
 
 .eyebrow {
