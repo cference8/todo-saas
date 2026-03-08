@@ -49,6 +49,7 @@ const props = defineProps({
 const emit = defineEmits([
   'select-workspace',
   'create-workspace',
+  'rename-workspace',
   'leave-workspace',
   'delete-workspace',
   'create-invite',
@@ -77,6 +78,7 @@ const currentWorkspaceName = computed(() => (
   || props.memberships.find((membership) => Number(membership.id) === Number(props.workspaceId))?.name
   || 'Workspace'
 ));
+const canRenameWorkspace = computed(() => props.role === 'owner');
 const canDeleteWorkspace = computed(() => props.role === 'owner' && props.memberCount <= 1);
 const canLeaveWorkspace = computed(() => props.role === 'member' || (props.role === 'owner' && props.memberCount > 1));
 const ownerMustTransfer = computed(() => props.role === 'owner' && props.memberCount > 1 && props.ownerCount < 2);
@@ -85,6 +87,12 @@ const canInvite = computed(() => props.role === 'owner');
 function handleCreateWorkspace() {
   modalMode.value = 'create-workspace';
   workspaceForm.name = '';
+  modalError.value = '';
+}
+
+function handleRenameWorkspace() {
+  modalMode.value = 'rename-workspace';
+  workspaceForm.name = currentWorkspaceName.value;
   modalError.value = '';
 }
 
@@ -110,6 +118,22 @@ function submitCreateWorkspace() {
   }
 
   emit('create-workspace', workspaceForm.name.trim());
+  closeModal();
+}
+
+function submitRenameWorkspace() {
+  const nextName = workspaceForm.name.trim();
+  if (!nextName) {
+    modalError.value = 'Workspace name is required.';
+    return;
+  }
+
+  if (nextName === currentWorkspaceName.value) {
+    closeModal();
+    return;
+  }
+
+  emit('rename-workspace', nextName);
   closeModal();
 }
 
@@ -250,6 +274,15 @@ function formatEmailPreview(email) {
         </select>
 
         <div class="workspace-actions">
+          <button
+            v-if="canRenameWorkspace"
+            type="button"
+            class="ghost-button muted-button"
+            :disabled="pending"
+            @click="handleRenameWorkspace"
+          >
+            Rename workspace
+          </button>
           <button type="button" class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
           <button v-if="canLeaveWorkspace" type="button" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
             Leave workspace
@@ -377,7 +410,27 @@ function formatEmailPreview(email) {
 
   <div v-if="modalMode" class="modal-backdrop" @click.self="closeModal">
     <section class="panel action-modal">
-      <template v-if="modalMode === 'create-workspace'">
+      <template v-if="modalMode === 'rename-workspace'">
+        <form class="modal-form-stack" @submit.prevent="submitRenameWorkspace">
+          <div>
+            <p class="eyebrow">Rename workspace</p>
+            <h2>Update {{ currentWorkspaceName }}</h2>
+            <p class="subtle">Owners can rename this workspace for everyone.</p>
+          </div>
+
+          <div class="modal-form">
+            <input v-model="workspaceForm.name" type="text" placeholder="Workspace name" :disabled="pending" />
+            <p v-if="modalError" class="form-error">{{ modalError }}</p>
+          </div>
+
+          <div class="modal-actions">
+            <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+            <button class="ghost-button" type="submit" :disabled="pending">Save name</button>
+          </div>
+        </form>
+      </template>
+
+      <template v-else-if="modalMode === 'create-workspace'">
         <form class="modal-form-stack" @submit.prevent="submitCreateWorkspace">
           <div>
             <p class="eyebrow">New workspace</p>

@@ -467,6 +467,29 @@ async function createWorkspace(name) {
   });
 }
 
+async function renameWorkspace(name) {
+  const workspaceName = String(name || '').trim();
+  if (!workspaceName) {
+    errorMessage.value = 'Workspace name is required.';
+    return;
+  }
+
+  if (!workspaceId.value) {
+    errorMessage.value = 'No active workspace selected.';
+    return;
+  }
+
+  await withPending(async () => {
+    const response = await request(`/api/workspaces/${workspaceId.value}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: workspaceName })
+    });
+
+    await loadBootstrap();
+    lastEvent.value = `${response.workspace.name} renamed.`;
+  });
+}
+
 async function leaveWorkspace() {
   const activeWorkspaceId = Number(workspaceId.value);
   const activeWorkspaceName = workspace.value?.name || 'this workspace';
@@ -895,6 +918,7 @@ onBeforeUnmount(() => {
           @leave-workspace="leaveWorkspace"
           @logout="clearSession"
           @promote-member="promoteMember"
+          @rename-workspace="renameWorkspace"
           @remove-member="removeMember"
           @resend-invite="resendInvite"
           @select-workspace="switchWorkspace"

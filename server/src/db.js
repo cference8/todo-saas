@@ -496,6 +496,68 @@ export async function createWorkspace({ userId, name }) {
   }
 }
 
+export async function renameWorkspace({ workspaceId, actorUserId, name }) {
+  const workspaceName = String(name || '').trim();
+  if (!workspaceName) {
+    const error = new Error('Workspace name is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const membershipResult = await client.query(
+      `SELECT wm.role,
+              w.name AS "previousName"
+       FROM workspace_members wm
+       JOIN workspaces w ON w.id = wm.workspace_id
+       WHERE wm.workspace_id = $1 AND wm.user_id = $2
+       FOR UPDATE`,
+      [workspaceId, actorUserId]
+    );
+
+    if (!membershipResult.rowCount) {
+      const error = new Error('Workspace not found for this user.');
+      error.status = 404;
+      throw error;
+    }
+
+    if (membershipResult.rows[0].role !== 'owner') {
+      const error = new Error('Only workspace owners can rename a workspace.');
+      error.status = 403;
+      throw error;
+    }
+
+    const result = await client.query(
+      `UPDATE workspaces
+       SET name = $2
+       WHERE id = $1
+       RETURNING id, name, slug, created_at AS "createdAt"`,
+      [workspaceId, workspaceName]
+    );
+
+    if (!result.rowCount) {
+      const error = new Error('Workspace not found.');
+      error.status = 404;
+      throw error;
+    }
+
+    await client.query('COMMIT');
+    return {
+      ...result.rows[0],
+      previousName: membershipResult.rows[0].previousName
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getWorkspaceMembers(workspaceId) {
   const result = await pool.query(
     `SELECT u.id, u.name, u.email, wm.role, wm.joined_at AS "joinedAt"

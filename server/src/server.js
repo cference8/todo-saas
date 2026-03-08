@@ -29,6 +29,7 @@ import {
   getSnapshot,
   initDb,
   leaveWorkspace,
+  renameWorkspace,
   promoteWorkspaceMemberToOwner,
   removeWorkspaceMember,
   registerUser,
@@ -383,6 +384,36 @@ app.post('/api/workspaces', requireAuth, async (req, res) => {
       workspaces: session.workspaces,
       defaultWorkspaceId: workspace.id
     });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch('/api/workspaces/:id', requireAuth, async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const name = String(req.body.name || '').trim();
+    if (!workspaceId) {
+      res.status(400).json({ error: 'Workspace id is required.' });
+      return;
+    }
+    if (!name) {
+      res.status(400).json({ error: 'Workspace name is required.' });
+      return;
+    }
+
+    const workspace = await renameWorkspace({
+      workspaceId,
+      actorUserId: req.auth.userId,
+      name
+    });
+
+    broadcastToWorkspace(workspaceId, 'workspace.renamed', {
+      workspaceId,
+      name: workspace.name
+    });
+
+    res.json({ workspace });
   } catch (error) {
     sendError(res, error);
   }
