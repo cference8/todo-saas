@@ -283,6 +283,11 @@ textarea::placeholder {
   z-index: 40;
 }
 
+.modal-backdrop-scrollable {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .action-modal {
   width: min(100%, 480px);
   padding: 1.3rem;
@@ -292,6 +297,14 @@ textarea::placeholder {
 
 .action-modal-wide {
   width: min(100%, 560px);
+}
+
+.action-modal-scrollable {
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-form,

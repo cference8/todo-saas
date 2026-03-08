@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
 const props = defineProps({
   currentUser: {
@@ -25,6 +25,8 @@ const profileForm = reactive({
   confirmPassword: ''
 });
 const modalError = ref('');
+let previousBodyOverflow = '';
+let bodyScrollLocked = false;
 
 const canChangePassword = computed(() => Boolean(props.currentUser?.hasPassword));
 const profileCreatedAtLabel = computed(() => {
@@ -51,6 +53,22 @@ function resetProfileForm() {
 function closeModal() {
   modalError.value = '';
   emit('close');
+}
+
+function setBodyScrollLocked(locked) {
+  if (typeof document === 'undefined') return;
+
+  if (locked) {
+    if (bodyScrollLocked) return;
+    previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    bodyScrollLocked = true;
+    return;
+  }
+
+  if (!bodyScrollLocked) return;
+  document.body.style.overflow = previousBodyOverflow;
+  bodyScrollLocked = false;
 }
 
 function submitProfile() {
@@ -118,17 +136,24 @@ function submitProfile() {
 watch(
   () => props.open,
   (open) => {
-    if (!open) return;
-    modalError.value = '';
-    resetProfileForm();
+    setBodyScrollLocked(open);
+
+    if (open) {
+      modalError.value = '';
+      resetProfileForm();
+    }
   },
   { immediate: true }
 );
+
+onBeforeUnmount(() => {
+  setBodyScrollLocked(false);
+});
 </script>
 
 <template>
-  <div v-if="open" class="modal-backdrop" @click.self="closeModal">
-    <section class="panel action-modal action-modal-wide">
+  <div v-if="open" class="modal-backdrop modal-backdrop-scrollable" @click.self="closeModal">
+    <section class="panel action-modal action-modal-wide action-modal-scrollable">
       <form class="modal-form-stack" @submit.prevent="submitProfile">
         <div>
           <p class="eyebrow">Account profile</p>
