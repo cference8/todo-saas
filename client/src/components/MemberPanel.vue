@@ -41,6 +41,7 @@ const lastInviteNotice = ref('');
 const lastInviteNoticeTone = ref('muted');
 const activeInviteId = ref(null);
 const activeMemberId = ref(null);
+const promoteMemberTarget = ref(null);
 
 const canInvite = computed(() => props.role === 'owner');
 
@@ -111,14 +112,23 @@ function canManageMember(member) {
   return canRemoveMember(member) || canPromoteMember(member);
 }
 
-function promoteMember(member) {
-  const confirmed = window.confirm(`Promote ${member.name} to owner?`);
-  if (!confirmed) return;
+function closePromoteModal() {
+  promoteMemberTarget.value = null;
+}
 
+function handlePromoteMember(member) {
+  promoteMemberTarget.value = member;
+}
+
+function confirmPromoteMember() {
+  if (!promoteMemberTarget.value) return;
+
+  const member = promoteMemberTarget.value;
   emit('promote-member', member, () => {
     lastInviteNotice.value = `${member.name} is now an owner.`;
     lastInviteNoticeTone.value = 'success';
     activeMemberId.value = null;
+    closePromoteModal();
   });
 }
 
@@ -178,7 +188,7 @@ function formatEmailPreview(email) {
             type="button"
             class="ghost-button muted-button"
             :disabled="pending"
-            @click="promoteMember(member)"
+            @click="handlePromoteMember(member)"
           >
             Make owner
           </button>
@@ -232,4 +242,21 @@ function formatEmailPreview(email) {
       </div>
     </div>
   </aside>
+
+  <div v-if="promoteMemberTarget" class="modal-backdrop" @click.self="closePromoteModal">
+    <section class="panel action-modal">
+      <div>
+        <p class="eyebrow">Promote member</p>
+        <h2>Make {{ promoteMemberTarget.name }} an owner?</h2>
+        <p class="subtle">Owners can invite people, manage members, and rename this workspace.</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closePromoteModal">Cancel</button>
+        <button class="ghost-button" type="button" :disabled="pending" @click="confirmPromoteMember">
+          Make owner
+        </button>
+      </div>
+    </section>
+  </div>
 </template>

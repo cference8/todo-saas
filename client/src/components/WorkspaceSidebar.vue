@@ -70,6 +70,7 @@ const lastInviteNotice = ref('');
 const lastInviteNoticeTone = ref('muted');
 const activeInviteId = ref(null);
 const activeMemberId = ref(null);
+const promoteMemberTarget = ref(null);
 const modalMode = ref('');
 const modalError = ref('');
 
@@ -114,6 +115,7 @@ function handleDeleteWorkspace() {
 function closeModal() {
   modalMode.value = '';
   modalError.value = '';
+  promoteMemberTarget.value = null;
 }
 
 function submitCreateWorkspace() {
@@ -219,14 +221,21 @@ function canManageMember(member) {
   return canRemoveMember(member) || canPromoteMember(member);
 }
 
-function promoteMember(member) {
-  const confirmed = window.confirm(`Promote ${member.name} to owner?`);
-  if (!confirmed) return;
+function handlePromoteMember(member) {
+  promoteMemberTarget.value = member;
+  modalMode.value = 'promote-member';
+  modalError.value = '';
+}
 
+function confirmPromoteMember() {
+  if (!promoteMemberTarget.value) return;
+
+  const member = promoteMemberTarget.value;
   emit('promote-member', member, () => {
     lastInviteNotice.value = `${member.name} is now an owner.`;
     lastInviteNoticeTone.value = 'success';
     activeMemberId.value = null;
+    closeModal();
   });
 }
 
@@ -333,7 +342,7 @@ function formatEmailPreview(email) {
                 type="button"
                 class="ghost-button muted-button"
                 :disabled="pending"
-                @click.stop="promoteMember(member)"
+                @click.stop="handlePromoteMember(member)"
               >
                 Make owner
               </button>
@@ -512,6 +521,21 @@ function formatEmailPreview(email) {
           <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
           <button class="ghost-danger" type="button" :disabled="pending || ownerMustTransfer" @click="confirmLeaveWorkspace">
             Leave workspace
+          </button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'promote-member' && promoteMemberTarget">
+        <div>
+          <p class="eyebrow">Promote member</p>
+          <h2>Make {{ promoteMemberTarget.name }} an owner?</h2>
+          <p class="subtle">Owners can invite people, manage members, and rename this workspace.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+          <button class="ghost-button" type="button" :disabled="pending" @click="confirmPromoteMember">
+            Make owner
           </button>
         </div>
       </template>
