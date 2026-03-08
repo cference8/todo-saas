@@ -87,6 +87,18 @@ async function copyLatestInvite() {
   startLatestInviteCopyFeedback();
 }
 
+function clearLatestInviteLink() {
+  lastInviteUrl.value = '';
+  lastInviteNotice.value = '';
+  lastInviteNoticeTone.value = 'muted';
+  latestInviteCopied.value = false;
+
+  if (latestInviteCopyTimer) {
+    window.clearTimeout(latestInviteCopyTimer);
+    latestInviteCopyTimer = null;
+  }
+}
+
 function queueLatestInviteLinkScroll() {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
   if (!window.matchMedia('(max-width: 720px)').matches) return;
@@ -137,6 +149,7 @@ function confirmCancelInvite() {
 
   const invite = cancelInviteTarget.value;
   emit('cancel-invite', invite, () => {
+    clearLatestInviteLink();
     lastInviteNotice.value = `Invite canceled for ${invite.email}.`;
     lastInviteNoticeTone.value = 'warning';
     activeInviteId.value = null;
