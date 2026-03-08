@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 const TOKEN_TTL = '7d';
+const OAUTH_STATE_TTL = '10m';
 const SCRYPT_KEYLEN = 64;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-jwt-secret';
 
@@ -11,6 +12,26 @@ export function issueAuthToken(payload) {
 
 export function verifyAuthToken(token) {
   return jwt.verify(token, JWT_SECRET);
+}
+
+export function issueOAuthState(payload) {
+  return jwt.sign(
+    {
+      ...payload,
+      purpose: 'google-oauth'
+    },
+    JWT_SECRET,
+    { expiresIn: OAUTH_STATE_TTL }
+  );
+}
+
+export function verifyOAuthState(token) {
+  const payload = jwt.verify(token, JWT_SECRET);
+  if (payload.purpose !== 'google-oauth') {
+    throw new Error('Invalid OAuth state.');
+  }
+
+  return payload;
 }
 
 export async function hashPassword(password) {

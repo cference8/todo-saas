@@ -83,6 +83,9 @@ Then edit `deploy/pi.env` and set:
 - `DATABASE_URL`
 - `JWT_SECRET`
 - `CLIENT_ORIGIN`
+- `SERVER_ORIGIN`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
 - `PORT`
 
 `deploy/pi.env` is ignored by git and should exist only on the server.
@@ -170,10 +173,24 @@ npm run dev
 
 - Register creates a user account and a first workspace
 - Login returns all workspaces the user belongs to
+- Google sign-in can either log into an existing account or create a new one with a default workspace
 - Owners can generate invite links for email addresses from the current workspace
 - Invite links can be accepted by an existing account with the invited email, or by registering a new account for that email
 - Lists can be created as `task` lists or `grocery` lists, and item fields adapt to the selected list type
 - The selected workspace determines API scope and WebSocket broadcasts
+
+## Google OAuth setup
+
+Create a Google OAuth client in Google Cloud Console with:
+
+- Authorized JavaScript origins:
+  - `https://tasked.lol`
+  - `http://localhost:5173` for local dev if you want the frontend to launch the flow locally
+- Authorized redirect URIs:
+  - `https://tasked.lol/api/auth/google/callback`
+  - `http://localhost:3001/api/auth/google/callback`
+
+Then set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `SERVER_ORIGIN` in `deploy/pi.env` or your local `server/.env`.
 
 ## Next logical upgrades
 

@@ -6,6 +6,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  googleEnabled: {
+    type: Boolean,
+    default: false
+  },
   errorMessage: {
     type: String,
     default: ''
@@ -20,7 +24,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['submit']);
+const emit = defineEmits(['submit', 'google']);
 
 const mode = ref('login');
 const form = reactive({
@@ -100,6 +104,20 @@ function submit() {
       <div class="auth-toggle">
         <button type="button" :class="{ active: mode === 'login' }" @click="mode = 'login'">Login</button>
         <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">Register</button>
+      </div>
+
+      <button
+        v-if="googleEnabled"
+        type="button"
+        class="oauth-button"
+        :disabled="pending"
+        @click="emit('google')"
+      >
+        Continue with Google
+      </button>
+      <p v-if="errorMessage && errorForMode === 'google'" class="form-error">{{ errorMessage }}</p>
+      <div v-if="googleEnabled" class="auth-separator">
+        <span>or use email</span>
       </div>
 
       <form class="auth-form" @submit.prevent="submit">

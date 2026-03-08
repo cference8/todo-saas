@@ -24,6 +24,7 @@ const socketState = ref('closed');
 const lastEvent = ref('Sign in to load your workspace');
 const errorMessage = ref('');
 const authErrorMode = ref('');
+const googleAuthEnabled = ref(false);
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
 const inviteDetails = ref(null);
 let socket;
@@ -123,6 +124,14 @@ function clearInviteState() {
   inviteDetails.value = null;
   const url = new URL(window.location.href);
   url.searchParams.delete('invite');
+  window.history.replaceState({}, '', url);
+}
+
+function clearHashState() {
+  if (!window.location.hash) return;
+
+  const url = new URL(window.location.href);
+  url.hash = '';
   window.history.replaceState({}, '', url);
 }
 
@@ -250,6 +259,18 @@ async function handleAuth(payload) {
   });
 }
 
+function startGoogleAuth() {
+  errorMessage.value = '';
+  authErrorMode.value = '';
+
+  const url = new URL('/api/auth/google', window.location.origin);
+  if (inviteToken.value) {
+    url.searchParams.set('invite', inviteToken.value);
+  }
+
+  window.location.assign(url.toString());
+}
+
 async function switchWorkspace(nextWorkspaceId) {
   await withPending(async () => {
     workspaceId.value = Number(nextWorkspaceId);
@@ -365,6 +386,36 @@ async function loadInvite() {
   }
 }
 
+async function loadAuthProviders() {
+  try {
+    const response = await request('/api/auth/providers', { headers: {} });
+    googleAuthEnabled.value = Boolean(response.google?.enabled);
+  } catch {
+    googleAuthEnabled.value = false;
+  }
+}
+
+function handleOAuthRedirectResult() {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+  if (!hash) return;
+
+  const params = new URLSearchParams(hash);
+  const nextToken = params.get('token');
+  const authError = params.get('authError');
+  const authMode = params.get('authMode');
+
+  if (nextToken) {
+    persistSession(nextToken, 0);
+    errorMessage.value = '';
+    authErrorMode.value = '';
+  } else if (authError) {
+    errorMessage.value = authError;
+    authErrorMode.value = authMode || 'google';
+  }
+
+  clearHashState();
+}
+
 async function acceptInvite() {
   if (!inviteToken.value || !token.value) return;
 
@@ -398,9 +449,22 @@ async function acceptInvite() {
 }
 
 async function restoreSession() {
-  if (!token.value || !workspaceId.value) return;
+  if (!token.value) return;
 
   try {
+    const session = await request('/api/auth/session');
+    memberships.value = normalizeMemberships(session.workspaces || []);
+    currentUser.value = session.user;
+
+    const nextWorkspaceId = workspaceId.value || session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0;
+    if (!nextWorkspaceId) {
+      localStorage.removeItem(WORKSPACE_KEY);
+      workspaceId.value = 0;
+      return;
+    }
+
+    workspaceId.value = Number(nextWorkspaceId);
+    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
     await loadBootstrap();
     connectSocket();
   } catch (error) {
@@ -408,10 +472,11 @@ async function restoreSession() {
     clearSession();
     return;
   }
-
 }
 
 onMounted(() => {
+  handleOAuthRedirectResult();
+  loadAuthProviders();
   loadInvite();
   restoreSession();
 });
@@ -426,9 +491,11 @@ onBeforeUnmount(() => {
     <template v-if="!isAuthenticated">
       <AuthPanel
         :invite="inviteDetails"
+        :google-enabled="googleAuthEnabled"
         :error-message="errorMessage"
         :error-for-mode="authErrorMode"
         :pending="pending"
+        @google="startGoogleAuth"
         @submit="handleAuth"
       />
     </template>

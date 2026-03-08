@@ -21,13 +21,52 @@ function slugify(input) {
     .slice(0, 48) || 'workspace';
 }
 
+function defaultWorkspaceNameFor(name) {
+  const firstName = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)[0];
+
+  if (!firstName) {
+    return 'My Workspace';
+  }
+
+  return `${firstName}'s Workspace`;
+}
+
+async function createWorkspaceForUser(client, { userId, workspaceName }) {
+  const workspaceSlug = `${slugify(workspaceName)}-${String(userId)}`;
+  const workspaceResult = await client.query(
+    `INSERT INTO workspaces (name, slug, created_by_user_id)
+     VALUES ($1, $2, $3)
+     RETURNING id, name, slug, created_at AS "createdAt"`,
+    [workspaceName.trim(), workspaceSlug, userId]
+  );
+  const workspace = workspaceResult.rows[0];
+
+  await client.query(
+    `INSERT INTO workspace_members (workspace_id, user_id, role)
+     VALUES ($1, $2, 'owner')`,
+    [workspace.id, userId]
+  );
+
+  await client.query(
+    `INSERT INTO lists (workspace_id, name, created_by_user_id)
+     VALUES ($1, 'General', $2), ($1, 'Product Ideas', $2)`,
+    [workspace.id, userId]
+  );
+
+  return workspace;
+}
+
 export async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
+      password_hash TEXT NOT NULL DEFAULT '',
+      google_subject TEXT UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -78,6 +117,8 @@ export async function initDb() {
   `);
 
   await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_subject TEXT;
+    ALTER TABLE users ALTER COLUMN password_hash SET DEFAULT '';
     ALTER TABLE lists ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'task';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS quantity TEXT NOT NULL DEFAULT '';
@@ -103,6 +144,7 @@ export async function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace_id ON workspace_invites(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites(email);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject ON users(google_subject) WHERE google_subject IS NOT NULL;
   `);
 }
 
@@ -148,26 +190,10 @@ export async function registerUser({ name, email, password, workspaceName, invit
     let workspace = null;
 
     if (!invite) {
-      const workspaceSlug = `${slugify(workspaceName)}-${String(user.id)}`;
-      const workspaceResult = await client.query(
-        `INSERT INTO workspaces (name, slug, created_by_user_id)
-         VALUES ($1, $2, $3)
-         RETURNING id, name, slug, created_at AS "createdAt"`,
-        [workspaceName.trim(), workspaceSlug, user.id]
-      );
-      workspace = workspaceResult.rows[0];
-
-      await client.query(
-        `INSERT INTO workspace_members (workspace_id, user_id, role)
-         VALUES ($1, $2, 'owner')`,
-        [workspace.id, user.id]
-      );
-
-      await client.query(
-        `INSERT INTO lists (workspace_id, name, created_by_user_id)
-         VALUES ($1, 'General', $2), ($1, 'Product Ideas', $2)`,
-        [workspace.id, user.id]
-      );
+      workspace = await createWorkspaceForUser(client, {
+        userId: user.id,
+        workspaceName
+      });
     }
 
     await client.query('COMMIT');
@@ -195,6 +221,12 @@ export async function authenticateUser({ email, password }) {
     throw error;
   }
 
+  if (!user.passwordHash) {
+    const error = new Error('This account uses Google sign-in. Continue with Google instead.');
+    error.status = 401;
+    throw error;
+  }
+
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) {
     const error = new Error('Invalid email or password.');
@@ -209,6 +241,116 @@ export async function authenticateUser({ email, password }) {
       name: user.name,
       email: user.email
     },
+    workspaces,
+    defaultWorkspaceId: workspaces[0]?.id ?? null
+  };
+}
+
+export async function authenticateWithGoogle({ email, googleSubject, name, inviteToken = null }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const normalizedEmail = email.toLowerCase();
+    const invite = inviteToken ? await getInviteRecordForRegistration(client, inviteToken) : null;
+
+    if (invite && invite.email !== normalizedEmail) {
+      const error = new Error('This invite was issued for a different email address.');
+      error.status = 403;
+      throw error;
+    }
+
+    let user = null;
+    const existingByGoogle = await client.query(
+      `SELECT id, name, email, google_subject AS "googleSubject"
+       FROM users
+       WHERE google_subject = $1`,
+      [googleSubject]
+    );
+    user = existingByGoogle.rows[0] || null;
+
+    if (!user) {
+      const existingByEmail = await client.query(
+        `SELECT id, name, email, google_subject AS "googleSubject"
+         FROM users
+         WHERE email = $1`,
+        [normalizedEmail]
+      );
+      user = existingByEmail.rows[0] || null;
+    }
+
+    let workspace = null;
+
+    if (user) {
+      if (user.googleSubject && user.googleSubject !== googleSubject) {
+        const error = new Error('This account is already linked to a different Google profile.');
+        error.status = 409;
+        throw error;
+      }
+
+      const updateResult = await client.query(
+        `UPDATE users
+         SET google_subject = COALESCE(google_subject, $2),
+             name = CASE WHEN BTRIM(name) = '' THEN $3 ELSE name END
+         WHERE id = $1
+         RETURNING id, name, email, created_at AS "createdAt"`,
+        [user.id, googleSubject, name.trim()]
+      );
+      user = updateResult.rows[0];
+    } else {
+      const createdUser = await client.query(
+        `INSERT INTO users (name, email, password_hash, google_subject)
+         VALUES ($1, $2, '', $3)
+         RETURNING id, name, email, created_at AS "createdAt"`,
+        [name.trim(), normalizedEmail, googleSubject]
+      );
+      user = createdUser.rows[0];
+
+      if (!invite) {
+        workspace = await createWorkspaceForUser(client, {
+          userId: user.id,
+          workspaceName: defaultWorkspaceNameFor(name)
+        });
+      }
+    }
+
+    await client.query('COMMIT');
+
+    const workspaces = await getUserWorkspaces(user.id);
+    return {
+      user,
+      workspace,
+      workspaces,
+      defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getAuthSession(userId) {
+  const [userResult, workspaces] = await Promise.all([
+    pool.query(
+      `SELECT id, name, email, created_at AS "createdAt"
+       FROM users
+       WHERE id = $1`,
+      [userId]
+    ),
+    getUserWorkspaces(userId)
+  ]);
+
+  if (!userResult.rowCount) {
+    const error = new Error('User not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  return {
+    user: userResult.rows[0],
     workspaces,
     defaultWorkspaceId: workspaces[0]?.id ?? null
   };

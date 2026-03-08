@@ -1,13 +1,16 @@
 import 'dotenv/config';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { issueAuthToken, verifyAuthToken } from './auth.js';
+import { issueAuthToken, issueOAuthState, verifyAuthToken, verifyOAuthState } from './auth.js';
+import { buildGoogleAuthUrl, exchangeGoogleCode, isGoogleAuthEnabled } from './google-oauth.js';
 import {
   acceptInviteForUser,
+  authenticateWithGoogle,
   authenticateUser,
   createList,
   createTask,
@@ -15,6 +18,7 @@ import {
   deleteList,
   deleteTask,
   ensureMembership,
+  getAuthSession,
   getInviteByToken,
   getSnapshot,
   initDb,
@@ -27,6 +31,9 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const port = Number(process.env.PORT || 3001);
 const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+const serverOrigin = process.env.SERVER_ORIGIN || (clientOrigin.includes('localhost:5173') ? `http://localhost:${port}` : clientOrigin);
+const googleCallbackPath = '/api/auth/google/callback';
+const googleStateCookieName = 'todo_saas_google_oauth_state';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const socketGroups = new Map();
@@ -37,6 +44,91 @@ app.use(express.json());
 function sendError(res, error) {
   const status = error.status || 500;
   res.status(status).json({ error: error.message || 'Internal server error.' });
+}
+
+function parseCookies(header = '') {
+  return String(header)
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, entry) => {
+      const separatorIndex = entry.indexOf('=');
+      if (separatorIndex === -1) {
+        return cookies;
+      }
+
+      const key = entry.slice(0, separatorIndex).trim();
+      const value = entry.slice(separatorIndex + 1).trim();
+      cookies[key] = decodeURIComponent(value);
+      return cookies;
+    }, {});
+}
+
+function serializeCookie(name, value, options = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+
+  if (options.maxAge !== undefined) {
+    parts.push(`Max-Age=${options.maxAge}`);
+  }
+
+  if (options.path) {
+    parts.push(`Path=${options.path}`);
+  }
+
+  if (options.httpOnly) {
+    parts.push('HttpOnly');
+  }
+
+  if (options.sameSite) {
+    parts.push(`SameSite=${options.sameSite}`);
+  }
+
+  if (options.secure) {
+    parts.push('Secure');
+  }
+
+  return parts.join('; ');
+}
+
+function getGoogleRedirectUri() {
+  return new URL(googleCallbackPath, serverOrigin).toString();
+}
+
+function getGoogleCallbackCookie() {
+  return serializeCookie(googleStateCookieName, '', {
+    maxAge: 0,
+    path: googleCallbackPath,
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: serverOrigin.startsWith('https://')
+  });
+}
+
+function buildClientRedirect({ inviteToken = '', hashParams = {} }) {
+  const redirectUrl = new URL(clientOrigin);
+  if (inviteToken) {
+    redirectUrl.searchParams.set('invite', inviteToken);
+  }
+
+  const hash = new URLSearchParams(
+    Object.entries(hashParams).filter(([, value]) => value !== undefined && value !== null && value !== '')
+  ).toString();
+
+  redirectUrl.hash = hash;
+  return redirectUrl.toString();
+}
+
+function redirectWithOAuthError(res, { message, inviteToken = '' }) {
+  res.setHeader('Set-Cookie', getGoogleCallbackCookie());
+  res.redirect(
+    buildClientRedirect({
+      inviteToken,
+      hashParams: {
+        authError: message,
+        authMode: 'google'
+      }
+    })
+  );
 }
 
 function requireAuth(req, res, next) {
@@ -112,6 +204,14 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/auth/providers', (_req, res) => {
+  res.json({
+    google: {
+      enabled: isGoogleAuthEnabled()
+    }
+  });
+});
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
@@ -138,6 +238,15 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+app.get('/api/auth/session', requireAuth, async (req, res) => {
+  try {
+    const session = await getAuthSession(req.auth.userId);
+    res.json(session);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const email = String(req.body.email || '').trim();
@@ -152,6 +261,103 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({ token, user: authResult.user, workspaces: authResult.workspaces, defaultWorkspaceId: authResult.defaultWorkspaceId });
   } catch (error) {
     sendError(res, error);
+  }
+});
+
+app.get('/api/auth/google', async (req, res) => {
+  if (!isGoogleAuthEnabled()) {
+    res.status(503).json({ error: 'Google sign-in is not configured.' });
+    return;
+  }
+
+  try {
+    const inviteToken = String(req.query.invite || req.query.inviteToken || '').trim();
+    const nonce = crypto.randomBytes(24).toString('hex');
+    const state = issueOAuthState({ nonce, inviteToken });
+
+    res.setHeader(
+      'Set-Cookie',
+      serializeCookie(googleStateCookieName, nonce, {
+        maxAge: 600,
+        path: googleCallbackPath,
+        httpOnly: true,
+        sameSite: 'Lax',
+        secure: serverOrigin.startsWith('https://')
+      })
+    );
+    res.redirect(
+      buildGoogleAuthUrl({
+        redirectUri: getGoogleRedirectUri(),
+        state
+      })
+    );
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const inviteTokenFromQuery = String(req.query.invite || req.query.inviteToken || '').trim();
+  let callbackInviteToken = inviteTokenFromQuery;
+
+  try {
+    const code = String(req.query.code || '').trim();
+    const stateToken = String(req.query.state || '').trim();
+    const errorCode = String(req.query.error || '').trim();
+
+    if (errorCode) {
+      redirectWithOAuthError(res, {
+        message: 'Google sign-in was canceled or denied.',
+        inviteToken: inviteTokenFromQuery
+      });
+      return;
+    }
+
+    if (!code || !stateToken) {
+      redirectWithOAuthError(res, {
+        message: 'Google sign-in returned an incomplete response.',
+        inviteToken: inviteTokenFromQuery
+      });
+      return;
+    }
+
+    const state = verifyOAuthState(stateToken);
+    callbackInviteToken = state.inviteToken || inviteTokenFromQuery;
+    const cookies = parseCookies(req.headers.cookie);
+    if (!cookies[googleStateCookieName] || cookies[googleStateCookieName] !== state.nonce) {
+      redirectWithOAuthError(res, {
+        message: 'Google sign-in could not be verified. Please try again.',
+        inviteToken: callbackInviteToken
+      });
+      return;
+    }
+
+    const profile = await exchangeGoogleCode({
+      code,
+      redirectUri: getGoogleRedirectUri()
+    });
+    const authResult = await authenticateWithGoogle({
+      email: profile.email,
+      googleSubject: profile.googleSubject,
+      name: profile.name,
+      inviteToken: callbackInviteToken || null
+    });
+    const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
+
+    res.setHeader('Set-Cookie', getGoogleCallbackCookie());
+    res.redirect(
+      buildClientRedirect({
+        inviteToken: callbackInviteToken,
+        hashParams: {
+          token
+        }
+      })
+    );
+  } catch (error) {
+    redirectWithOAuthError(res, {
+      message: error.message || 'Google sign-in failed.',
+      inviteToken: callbackInviteToken
+    });
   }
 });
 
