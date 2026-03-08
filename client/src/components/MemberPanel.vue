@@ -26,12 +26,13 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['create-invite', 'copy-invite-link', 'resend-invite', 'cancel-invite', 'logout']);
+const emit = defineEmits(['create-invite', 'copy-invite-link', 'resend-invite', 'cancel-invite', 'remove-member', 'logout']);
 const inviteEmail = ref('');
 const lastInviteUrl = ref('');
 const lastInviteNotice = ref('');
 const lastInviteNoticeTone = ref('muted');
 const activeInviteId = ref(null);
+const activeMemberId = ref(null);
 
 const canInvite = computed(() => props.role === 'owner');
 
@@ -56,6 +57,10 @@ async function copyLatestInvite() {
 
 function toggleInviteActions(inviteId) {
   activeInviteId.value = activeInviteId.value === inviteId ? null : inviteId;
+}
+
+function toggleMemberActions(memberId) {
+  activeMemberId.value = activeMemberId.value === memberId ? null : memberId;
 }
 
 function copyInviteLink(invite) {
@@ -86,6 +91,21 @@ function cancelInvite(invite) {
   });
 }
 
+function canRemoveMember(member) {
+  return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
+}
+
+function removeMember(member) {
+  const confirmed = window.confirm(`Remove ${member.name} from this workspace?`);
+  if (!confirmed) return;
+
+  emit('remove-member', member, () => {
+    lastInviteNotice.value = `${member.name} was removed from the workspace.`;
+    lastInviteNoticeTone.value = 'warning';
+    activeMemberId.value = null;
+  });
+}
+
 function formatEmailPreview(email) {
   const value = String(email || '');
   return value.length > EMAIL_PREVIEW_LIMIT ? `${value.slice(0, EMAIL_PREVIEW_LIMIT)}...` : value;
@@ -104,12 +124,30 @@ function formatEmailPreview(email) {
     </div>
 
     <div class="member-list">
-      <div v-for="member in members" :key="member.id" class="member-row">
-        <span>
+      <div
+        v-for="member in members"
+        :key="member.id"
+        class="member-row"
+        :class="{ active: activeMemberId === member.id }"
+      >
+        <button
+          v-if="canRemoveMember(member)"
+          type="button"
+          class="member-summary"
+          :disabled="pending"
+          @click="toggleMemberActions(member.id)"
+        >
+          <strong>{{ member.name }}</strong>
+          <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
+        </button>
+        <span v-else>
           <strong>{{ member.name }}</strong>
           <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
         </span>
         <small class="member-role">{{ member.role }}</small>
+        <div v-if="activeMemberId === member.id" class="member-actions">
+          <button type="button" class="ghost-danger" :disabled="pending" @click="removeMember(member)">Remove</button>
+        </div>
       </div>
     </div>
 

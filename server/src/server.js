@@ -26,6 +26,7 @@ import {
   getInviteByToken,
   getSnapshot,
   initDb,
+  removeWorkspaceMember,
   registerUser,
   resendWorkspaceInvite,
   updateTask
@@ -44,6 +45,7 @@ const googleStateCookieName = 'todo_saas_google_oauth_state';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const socketGroups = new Map();
+const userWorkspaceSockets = new Map();
 
 app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json());
@@ -260,13 +262,43 @@ function attachSocketToWorkspace(workspaceId, socket) {
   const group = socketGroups.get(key) || new Set();
   group.add(socket);
   socketGroups.set(key, group);
+  const userKey = `${workspaceId}:${socket.userId}`;
+  const userGroup = userWorkspaceSockets.get(userKey) || new Set();
+  userGroup.add(socket);
+  userWorkspaceSockets.set(userKey, userGroup);
 
   socket.on('close', () => {
     group.delete(socket);
     if (!group.size) {
       socketGroups.delete(key);
     }
+
+    userGroup.delete(socket);
+    if (!userGroup.size) {
+      userWorkspaceSockets.delete(userKey);
+    }
   });
+}
+
+function revokeWorkspaceAccess({ workspaceId, userId, reason = 'Access revoked.' }) {
+  const userKey = `${workspaceId}:${userId}`;
+  const sockets = userWorkspaceSockets.get(userKey);
+  if (!sockets?.size) return;
+
+  const payload = JSON.stringify({
+    type: 'access_revoked',
+    data: {
+      workspaceId,
+      reason
+    }
+  });
+
+  for (const socket of sockets) {
+    if (socket.readyState === 1) {
+      socket.send(payload);
+    }
+    socket.close(4001, 'workspace access revoked');
+  }
 }
 
 app.get('/api/health', (_req, res) => {
@@ -717,6 +749,35 @@ app.post('/api/invites/accept', requireAuth, async (req, res) => {
   }
 });
 
+app.delete('/api/members/:id', requireAuth, requireWorkspace, async (req, res) => {
+  try {
+    const targetUserId = Number(req.params.id);
+    if (!targetUserId) {
+      res.status(400).json({ error: 'Member id is required.' });
+      return;
+    }
+
+    const removed = await removeWorkspaceMember({
+      workspaceId: req.workspaceId,
+      actorUserId: req.auth.userId,
+      targetUserId
+    });
+
+    revokeWorkspaceAccess({
+      workspaceId: req.workspaceId,
+      userId: Number(removed.userId),
+      reason: `You were removed from ${req.membership.name}.`
+    });
+    broadcastToWorkspace(req.workspaceId, 'member.removed', {
+      userId: Number(removed.userId),
+      email: removed.email
+    });
+    res.status(204).end();
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post('/api/lists', requireAuth, requireWorkspace, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
@@ -907,6 +968,7 @@ server.on('upgrade', async (request, socket, head) => {
     request.workspaceId = workspaceId;
 
     wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.userId = Number(auth.userId);
       wss.emit('connection', ws, request);
     });
   } catch {

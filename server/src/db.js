@@ -480,6 +480,70 @@ export async function getWorkspaceMembers(workspaceId) {
   return result.rows;
 }
 
+export async function removeWorkspaceMember({ workspaceId, actorUserId, targetUserId }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    if (actorUserId === targetUserId) {
+      const error = new Error('Owners cannot remove themselves from the workspace.');
+      error.status = 400;
+      throw error;
+    }
+
+    const actorMembership = await client.query(
+      `SELECT role
+       FROM workspace_members
+       WHERE workspace_id = $1 AND user_id = $2`,
+      [workspaceId, actorUserId]
+    );
+    if (!actorMembership.rowCount || actorMembership.rows[0].role !== 'owner') {
+      const error = new Error('Only workspace owners can remove members.');
+      error.status = 403;
+      throw error;
+    }
+
+    const targetMembership = await client.query(
+      `SELECT wm.user_id AS "userId",
+              wm.role,
+              u.email,
+              u.name
+       FROM workspace_members wm
+       JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = $1 AND wm.user_id = $2
+       FOR UPDATE`,
+      [workspaceId, targetUserId]
+    );
+    if (!targetMembership.rowCount) {
+      const error = new Error('Member not found in this workspace.');
+      error.status = 404;
+      throw error;
+    }
+
+    const target = targetMembership.rows[0];
+    if (target.role === 'owner') {
+      const error = new Error('Owners cannot remove other owners from the workspace.');
+      error.status = 400;
+      throw error;
+    }
+
+    await client.query(
+      `DELETE FROM workspace_members
+       WHERE workspace_id = $1 AND user_id = $2`,
+      [workspaceId, targetUserId]
+    );
+
+    await client.query('COMMIT');
+    return target;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getWorkspaceInvites(workspaceId) {
   const result = await pool.query(
     `SELECT wi.id,

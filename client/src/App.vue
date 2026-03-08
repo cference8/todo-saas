@@ -28,6 +28,7 @@ const googleAuthEnabled = ref(false);
 const appleAuthEnabled = ref(false);
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
 const inviteDetails = ref(null);
+const revokedWorkspaceId = ref(0);
 let socket;
 let reconnectTimer;
 let allowReconnect = true;
@@ -155,6 +156,15 @@ function applySnapshot(snapshot) {
   errorMessage.value = '';
 }
 
+function clearWorkspaceState() {
+  workspace.value = null;
+  lists.value = [];
+  tasks.value = [];
+  members.value = [];
+  invites.value = [];
+  activeListId.value = null;
+}
+
 async function loadBootstrap() {
   const snapshot = await request(`/api/bootstrap?workspaceId=${workspaceId.value}`);
   applySnapshot(snapshot);
@@ -208,6 +218,11 @@ function connectSocket() {
       return;
     }
 
+    if (payload.type === 'access_revoked') {
+      handleWorkspaceRevoked(payload.data);
+      return;
+    }
+
     if (payload.type === 'event') {
       lastEvent.value = `${payload.data.action} • ${new Date(payload.data.sentAt).toLocaleTimeString()}`;
       loadBootstrap().catch((error) => {
@@ -215,6 +230,48 @@ function connectSocket() {
       });
     }
   });
+}
+
+async function syncSessionAfterWorkspaceLoss(message) {
+  disconnectSocket();
+
+  try {
+    const session = await request('/api/auth/session');
+    memberships.value = normalizeMemberships(session.workspaces || []);
+    currentUser.value = session.user;
+
+    const fallbackWorkspaceId = session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0;
+    if (!fallbackWorkspaceId) {
+      workspaceId.value = 0;
+      localStorage.removeItem(WORKSPACE_KEY);
+      clearWorkspaceState();
+      errorMessage.value = message;
+      return;
+    }
+
+    workspaceId.value = Number(fallbackWorkspaceId);
+    revokedWorkspaceId.value = 0;
+    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
+    await loadBootstrap();
+    connectSocket();
+    errorMessage.value = message;
+  } catch (error) {
+    errorMessage.value = error.message || message;
+    clearSession();
+  }
+}
+
+function handleWorkspaceRevoked(payload = {}) {
+  const revokedId = Number(payload.workspaceId || workspaceId.value);
+  revokedWorkspaceId.value = revokedId;
+
+  if (workspaceId.value === revokedId) {
+    workspaceId.value = 0;
+    localStorage.removeItem(WORKSPACE_KEY);
+    clearWorkspaceState();
+  }
+
+  syncSessionAfterWorkspaceLoss(payload.reason || 'Your access to this workspace was revoked.');
 }
 
 async function withPending(work) {
@@ -431,6 +488,19 @@ async function cancelInvite(invite, onCompleted) {
   });
 }
 
+async function removeMember(member, onCompleted) {
+  await withPending(async () => {
+    await request(`/api/members/${member.id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ workspaceId: workspaceId.value })
+    });
+    if (typeof onCompleted === 'function') {
+      onCompleted();
+    }
+    await loadBootstrap();
+  });
+}
+
 async function loadInvite() {
   if (!inviteToken.value) return;
 
@@ -518,14 +588,17 @@ async function restoreSession() {
     memberships.value = normalizeMemberships(session.workspaces || []);
     currentUser.value = session.user;
 
-    const nextWorkspaceId = workspaceId.value || session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0;
+    const preferredWorkspaceId = workspaceId.value && workspaceId.value !== revokedWorkspaceId.value ? workspaceId.value : 0;
+    const nextWorkspaceId = preferredWorkspaceId || session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0;
     if (!nextWorkspaceId) {
       localStorage.removeItem(WORKSPACE_KEY);
       workspaceId.value = 0;
+      clearWorkspaceState();
       return;
     }
 
     workspaceId.value = Number(nextWorkspaceId);
+    revokedWorkspaceId.value = 0;
     localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
     await loadBootstrap();
     connectSocket();
@@ -586,6 +659,15 @@ onBeforeUnmount(() => {
         <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
       </section>
 
+      <section v-else-if="!hasWorkspace" class="panel invite-accept-panel">
+        <div>
+          <p class="eyebrow">No workspace selected</p>
+          <h2>Your workspace access changed</h2>
+          <p class="subtle">You are still signed in, but you no longer have an active workspace selected.</p>
+          <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
+        </div>
+      </section>
+
       <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
       <section v-if="hasWorkspace" class="layout-grid three-up">
@@ -635,6 +717,7 @@ onBeforeUnmount(() => {
           @copy-invite-link="copyInviteLink"
           @create-invite="createInvite"
           @logout="clearSession"
+          @remove-member="removeMember"
           @resend-invite="resendInvite"
         />
       </section>

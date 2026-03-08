@@ -253,6 +253,12 @@ textarea {
   align-items: flex-start;
   padding: 1.05rem 1rem;
   min-width: 0;
+  flex-wrap: wrap;
+}
+
+.member-row.active {
+  border-color: rgba(187, 79, 57, 0.18);
+  box-shadow: 0 10px 24px rgba(187, 79, 57, 0.06);
 }
 
 .list-card:hover {
@@ -281,6 +287,18 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.member-summary {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  cursor: pointer;
+}
+
 .member-email {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -304,6 +322,19 @@ textarea {
   color: #4d6980;
   max-width: 100%;
   white-space: nowrap;
+}
+
+.member-actions {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 0.15rem;
+}
+
+.member-actions .ghost-danger {
+  min-height: 40px;
+  padding: 0 0.95rem;
+  border-radius: 999px;
 }
 
 .invite-row {
