@@ -836,6 +836,12 @@ onBeforeUnmount(() => {
 <template>
   <main class="app-shell">
     <header class="app-topbar">
+      <div class="app-brand" aria-label="Tasked">
+        <img
+          :src="theme === 'dark' ? '/imgs/tasked-logo-dark.png' : '/imgs/tasked-logo-light.png'"
+          alt="Tasked"
+        />
+      </div>
       <div class="theme-switch" role="group" aria-label="Color theme">
         <button
           type="button"

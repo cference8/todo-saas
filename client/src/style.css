@@ -189,8 +189,24 @@ textarea::placeholder {
 
 .app-topbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
   margin-bottom: 1rem;
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0.15rem 0.1rem;
+}
+
+.app-brand img {
+  display: block;
+  height: 52px;
+  width: auto;
+  max-width: min(100%, 260px);
 }
 
 .theme-switch {
@@ -1297,7 +1313,19 @@ textarea {
   }
 
   .app-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
     margin-bottom: 0.75rem;
+  }
+
+  .app-brand {
+    justify-content: center;
+  }
+
+  .app-brand img {
+    height: 44px;
+    max-width: min(100%, 220px);
   }
 
   .theme-switch {
