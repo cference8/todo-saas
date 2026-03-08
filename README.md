@@ -239,6 +239,8 @@ Invite delivery and password reset emails share the same Resend-backed configura
 
 The invite record is still created even if email delivery is disabled or fails. In that case, the UI keeps showing the invite link so it can be copied manually. Password reset requests stay generic even when no email is sent.
 
+If an account only has Google or Apple connected, the forgot-password flow sends a password setup link instead of pretending a password already exists.
+
 Before sending from Resend, verify the sending domain or sender address in your Resend account. Their official docs cover the send-email API and domain setup:
 
 - https://resend.com/docs/api-reference/emails/send-email

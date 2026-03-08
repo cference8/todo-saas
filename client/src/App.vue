@@ -486,7 +486,7 @@ async function handleAuth(payload) {
         headers: {},
         body: JSON.stringify({ email: payload.email })
       });
-      authNoticeMessage.value = response.notice || 'If an account exists for that email, a password reset link will arrive shortly.';
+      authNoticeMessage.value = response.notice || 'If an account exists for that email, a password link will arrive shortly.';
       authNoticeMode.value = payload.mode;
       authNoticeTone.value = 'success';
       return;

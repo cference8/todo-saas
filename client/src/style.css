@@ -709,6 +709,11 @@ textarea {
   background: var(--surface-subtle);
 }
 
+.profile-password-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .workspace-panel .invite-form,
 .workspace-panel .invite-link-card,
 .workspace-panel .invite-list,

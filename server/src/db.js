@@ -327,7 +327,7 @@ export async function authenticateUser({ email, password }) {
     if (user.googleSubject) providers.push('Google');
     if (user.appleSubject) providers.push('Apple');
     const providerLabel = providers.length ? providers.join(' or ') : 'social sign-in';
-    const error = new Error(`This account uses ${providerLabel}. Continue with that provider instead.`);
+    const error = new Error(`This account uses ${providerLabel}. Continue with that provider or use Forgot password to set a password.`);
     error.status = 401;
     throw error;
   }
@@ -368,7 +368,9 @@ export async function createPasswordResetRequest({ email }) {
       `SELECT id,
               name,
               email,
-              password_hash AS "passwordHash"
+              password_hash AS "passwordHash",
+              google_subject AS "googleSubject",
+              apple_subject AS "appleSubject"
        FROM users
        WHERE email = $1
        FOR UPDATE`,
@@ -376,7 +378,7 @@ export async function createPasswordResetRequest({ email }) {
     );
     const user = userResult.rows[0];
 
-    if (!user || !user.passwordHash) {
+    if (!user) {
       await client.query('COMMIT');
       return null;
     }
@@ -399,13 +401,17 @@ export async function createPasswordResetRequest({ email }) {
       userId: user.id,
       email: user.email,
       name: user.name,
+      kind: user.passwordHash ? 'reset' : 'setup',
+      providerLabel: user.googleSubject && user.appleSubject
+        ? 'Google or Apple'
+        : (user.googleSubject ? 'Google' : (user.appleSubject ? 'Apple' : 'your current sign-in method')),
       token
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
 
     if (error.code === '23505' && error.constraint === 'idx_password_reset_tokens_token_hash') {
-      const tokenConflictError = new Error('Failed to issue a password reset link. Please try again.');
+      const tokenConflictError = new Error('Failed to issue a password link. Please try again.');
       tokenConflictError.status = 409;
       throw tokenConflictError;
     }
@@ -696,7 +702,11 @@ export async function updateUserProfile({ userId, name, currentPassword = '', ne
     await client.query('BEGIN');
 
     const userResult = await client.query(
-      `SELECT id, name, password_hash AS "passwordHash"
+      `SELECT id,
+              name,
+              password_hash AS "passwordHash",
+              google_subject AS "googleSubject",
+              apple_subject AS "appleSubject"
        FROM users
        WHERE id = $1
        FOR UPDATE`,
@@ -714,22 +724,30 @@ export async function updateUserProfile({ userId, name, currentPassword = '', ne
     let nextPasswordHash = null;
 
     if (wantsPasswordChange) {
-      if (!user.passwordHash) {
-        const error = new Error('Password changes are unavailable for this sign-in method.');
+      if (!newPassword) {
+        const error = new Error(user.passwordHash
+          ? 'Current password and new password are required to change your password.'
+          : 'New password is required to set your password.');
         error.status = 400;
         throw error;
       }
 
-      if (!currentPassword || !newPassword) {
-        const error = new Error('Current password and new password are required to change your password.');
-        error.status = 400;
-        throw error;
-      }
+      if (user.passwordHash) {
+        if (!currentPassword) {
+          const error = new Error('Current password and new password are required to change your password.');
+          error.status = 400;
+          throw error;
+        }
 
-      const validPassword = await verifyPassword(currentPassword, user.passwordHash);
-      if (!validPassword) {
-        const error = new Error('Current password is incorrect.');
-        error.status = 401;
+        const validPassword = await verifyPassword(currentPassword, user.passwordHash);
+        if (!validPassword) {
+          const error = new Error('Current password is incorrect.');
+          error.status = 401;
+          throw error;
+        }
+      } else if (!user.googleSubject && !user.appleSubject) {
+        const error = new Error('Password setup is unavailable for this account.');
+        error.status = 400;
         throw error;
       }
 

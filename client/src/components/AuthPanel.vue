@@ -86,7 +86,7 @@ const passwordPlaceholder = computed(() => (isResetPasswordMode.value ? 'New pas
 const confirmPasswordPlaceholder = computed(() => (isResetPasswordMode.value ? 'Retype new password' : 'Retype password'));
 const helperCopy = computed(() => {
   if (isForgotPasswordMode.value) {
-    return 'Enter the email you use to sign in and we will send a reset link.';
+    return 'Enter the email you use to sign in and we will send a password link.';
   }
 
   if (isResetPasswordMode.value) {
@@ -96,7 +96,7 @@ const helperCopy = computed(() => {
   return '';
 });
 const submitButtonLabel = computed(() => {
-  if (isForgotPasswordMode.value) return 'Send reset link';
+  if (isForgotPasswordMode.value) return 'Send password link';
   if (isResetPasswordMode.value) return 'Save new password';
 
   return isLoginMode.value

@@ -28,19 +28,39 @@ const modalError = ref('');
 let previousBodyOverflow = '';
 let bodyScrollLocked = false;
 
-const canChangePassword = computed(() => Boolean(props.currentUser?.hasPassword));
+const hasPassword = computed(() => Boolean(props.currentUser?.hasPassword));
+const hasGoogle = computed(() => Boolean(props.currentUser?.hasGoogle));
+const hasApple = computed(() => Boolean(props.currentUser?.hasApple));
+const hasSocialLogin = computed(() => hasGoogle.value || hasApple.value);
+const socialProviderLabel = computed(() => {
+  const providers = [];
+  if (hasGoogle.value) providers.push('Google');
+  if (hasApple.value) providers.push('Apple');
+  return providers.join(' or ');
+});
 const profileCreatedAtLabel = computed(() => {
   const createdAt = props.currentUser?.createdAt;
   return createdAt ? new Date(createdAt).toLocaleDateString() : 'Unknown';
 });
-const profileAuthMethods = computed(() => {
+const profileLoginMethods = computed(() => {
   const methods = [];
 
-  if (props.currentUser?.hasPassword) methods.push('Email + password');
-  if (props.currentUser?.hasGoogle) methods.push('Google');
-  if (props.currentUser?.hasApple) methods.push('Apple');
+  if (hasGoogle.value) methods.push('Google connected');
+  if (hasApple.value) methods.push('Apple connected');
+  methods.push(hasPassword.value ? 'Password set' : 'Password not set');
 
-  return methods.length ? methods : ['Email'];
+  return methods;
+});
+const passwordPanelCopy = computed(() => {
+  if (hasPassword.value) {
+    return 'Leave these blank to keep your current password.';
+  }
+
+  if (hasSocialLogin.value) {
+    return `This account signs in with ${socialProviderLabel.value}. Add a password if you also want email + password as a login option.`;
+  }
+
+  return 'Set a password for this account.';
 });
 
 function resetProfileForm() {
@@ -85,18 +105,8 @@ function submitProfile() {
   }
 
   if (wantsPasswordChange) {
-    if (!canChangePassword.value) {
-      modalError.value = 'Password changes are unavailable for this sign-in method.';
-      return;
-    }
-
-    if (!profileForm.currentPassword) {
-      modalError.value = 'Enter your current password.';
-      return;
-    }
-
     if (!profileForm.newPassword) {
-      modalError.value = 'Enter a new password.';
+      modalError.value = hasPassword.value ? 'Enter a new password.' : 'Enter a password to add to your account.';
       return;
     }
 
@@ -107,6 +117,11 @@ function submitProfile() {
 
     if (profileForm.newPassword !== profileForm.confirmPassword) {
       modalError.value = 'New passwords do not match.';
+      return;
+    }
+
+    if (hasPassword.value && !profileForm.currentPassword) {
+      modalError.value = 'Enter your current password.';
       return;
     }
   }
@@ -168,9 +183,9 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="profile-summary-card">
-            <small class="eyebrow">Sign in with</small>
+            <small class="eyebrow">Login methods</small>
             <div class="profile-provider-list">
-              <span v-for="method in profileAuthMethods" :key="method" class="profile-provider-chip">{{ method }}</span>
+              <span v-for="method in profileLoginMethods" :key="method" class="profile-provider-chip">{{ method }}</span>
             </div>
           </div>
 
@@ -198,15 +213,11 @@ onBeforeUnmount(() => {
         <div class="profile-password-panel">
           <div>
             <p class="eyebrow">Password</p>
-            <p class="subtle">
-              {{ canChangePassword
-                ? 'Leave these blank to keep your current password.'
-                : 'This account uses social sign-in, so password changes are unavailable here.' }}
-            </p>
+            <p class="subtle">{{ passwordPanelCopy }}</p>
           </div>
 
-          <div v-if="canChangePassword" class="modal-form">
-            <label class="modal-form-field">
+          <div class="modal-form">
+            <label v-if="hasPassword" class="modal-form-field">
               <span class="modal-form-label">Current password</span>
               <input
                 v-model="profileForm.currentPassword"
@@ -218,26 +229,30 @@ onBeforeUnmount(() => {
             </label>
 
             <label class="modal-form-field">
-              <span class="modal-form-label">New password</span>
+              <span class="modal-form-label">{{ hasPassword ? 'New password' : 'Set password' }}</span>
               <input
                 v-model="profileForm.newPassword"
                 type="password"
-                placeholder="New password"
+                :placeholder="hasPassword ? 'New password' : 'Create a password'"
                 autocomplete="new-password"
                 :disabled="pending"
               />
             </label>
 
             <label class="modal-form-field">
-              <span class="modal-form-label">Retype new password</span>
+              <span class="modal-form-label">{{ hasPassword ? 'Retype new password' : 'Retype password' }}</span>
               <input
                 v-model="profileForm.confirmPassword"
                 type="password"
-                placeholder="Retype new password"
+                :placeholder="hasPassword ? 'Retype new password' : 'Retype password'"
                 autocomplete="new-password"
                 :disabled="pending"
               />
             </label>
+          </div>
+
+          <div v-if="!hasPassword" class="profile-password-actions">
+            <button class="ghost-button" type="submit" :disabled="pending">Set password</button>
           </div>
         </div>
 

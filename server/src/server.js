@@ -56,7 +56,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const socketGroups = new Map();
 const userWorkspaceSockets = new Map();
-const PASSWORD_RESET_REQUEST_NOTICE = 'If an account exists for that email, a password reset link will arrive shortly.';
+const PASSWORD_RESET_REQUEST_NOTICE = 'If an account exists for that email, a password link will arrive shortly.';
 
 app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json());
@@ -130,22 +130,26 @@ async function deliverPasswordResetEmail({ req, resetRequest }) {
       resetUrl,
       email: resetRequest.email,
       recipientName: resetRequest.name,
-      expiresAt: resetRequest.expiresAt
+      expiresAt: resetRequest.expiresAt,
+      kind: resetRequest.kind,
+      providerLabel: resetRequest.providerLabel
     });
 
     if (!emailDelivery.ok) {
-      console.warn('Password reset email was not sent', {
+      console.warn('Password link email was not sent', {
         resetId: resetRequest.id,
         userId: resetRequest.userId,
         email: resetRequest.email,
+        kind: resetRequest.kind,
         status: emailDelivery.status
       });
     }
   } catch (error) {
-    console.error('Failed to send password reset email', {
+    console.error('Failed to send password link email', {
       resetId: resetRequest.id,
       userId: resetRequest.userId,
       email: resetRequest.email,
+      kind: resetRequest.kind,
       error: error.message
     });
   }
