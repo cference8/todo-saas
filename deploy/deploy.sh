@@ -6,13 +6,21 @@ BRANCH="main"
 
 cd "$APP_DIR"
 
+rebuild_containers() {
+  docker compose up --build -d
+}
+
 echo "[deploy] fetching latest code"
 git fetch origin "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
 echo "[deploy] rebuilding containers"
 docker compose down --remove-orphans
-docker compose up --build -d
+if ! rebuild_containers; then
+  echo "[deploy] rebuild failed; pruning build cache and retrying once"
+  docker buildx prune -af || docker builder prune -af || true
+  rebuild_containers
+fi
 
 echo "[deploy] waiting for api health"
 for attempt in $(seq 1 30); do
