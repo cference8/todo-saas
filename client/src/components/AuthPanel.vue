@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 const props = defineProps({
   invite: {
@@ -39,6 +39,12 @@ const form = reactive({
 });
 
 const errorMode = ref('');
+const googleButtonAsset = computed(() => (
+  mode.value === 'register'
+    ? '/google-imgs/svg/light/web_light_rd_SU.svg'
+    : '/google-imgs/svg/light/web_light_rd_SI.svg'
+));
+const googleButtonLabel = computed(() => (mode.value === 'register' ? 'Sign up with Google' : 'Sign in with Google'));
 
 watch(
   () => props.invite?.email,
@@ -114,11 +120,12 @@ function submit() {
         <button
           v-if="googleEnabled"
           type="button"
-          class="oauth-button"
+          class="oauth-button google"
+          :aria-label="googleButtonLabel"
           :disabled="pending"
           @click="emit('google')"
         >
-          Continue with Google
+          <img class="oauth-google-image" :src="googleButtonAsset" alt="" aria-hidden="true" />
         </button>
         <button
           v-if="appleEnabled"

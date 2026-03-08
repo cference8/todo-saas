@@ -483,6 +483,7 @@ textarea {
 .oauth-actions {
   display: grid;
   gap: 0.75rem;
+  justify-items: center;
 }
 
 .invite-form,
@@ -757,26 +758,67 @@ textarea {
 }
 
 .oauth-button {
-  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  width: min(100%, 320px);
+  min-height: 56px;
+  padding: 0 1.25rem;
   border: 1px solid rgba(30, 41, 51, 0.12);
-  border-radius: 18px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.96);
   color: #1e2933;
   font-weight: 600;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.oauth-button.google {
+  width: min(100%, 200px);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.oauth-button.google:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.oauth-google-image {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .oauth-button:hover {
   background: rgba(246, 241, 232, 0.9);
+  transform: translateY(-1px);
 }
 
 .oauth-button.apple {
   background: #111111;
   color: #ffffff;
   border-color: #111111;
+  box-shadow: 0 1px 2px rgba(17, 17, 17, 0.28);
 }
 
 .oauth-button.apple:hover {
   background: #222222;
+  border-color: #222222;
+}
+
+.oauth-button:disabled {
+  transform: none;
+  cursor: default;
+  box-shadow: none;
 }
 
 .auth-separator {
@@ -855,6 +897,40 @@ textarea {
 
   .modal-actions {
     grid-template-columns: 1fr;
+  }
+
+  .auth-shell {
+    align-items: stretch;
+    gap: 1rem;
+    padding: 1rem;
+    min-height: auto;
+  }
+
+  .auth-copy,
+  .auth-card {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+
+  .auth-copy {
+    padding: 0.3rem 0.25rem 0;
+  }
+
+  .auth-card {
+    padding: 1.1rem 1rem 1rem;
+    border-radius: 24px;
+  }
+
+  .auth-toggle,
+  .oauth-actions,
+  .auth-form {
+    gap: 0.8rem;
+  }
+
+  .auth-form input,
+  .oauth-button {
+    min-height: 54px;
   }
 
   .composer button,
