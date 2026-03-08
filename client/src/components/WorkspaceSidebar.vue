@@ -230,6 +230,12 @@ function formatEmailPreview(email) {
     </div>
 
     <div class="panel-scroll">
+      <section class="workspace-section workspace-account-card">
+        <p class="eyebrow">Account</p>
+        <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
+        <small class="subtle">{{ currentUser?.email }}</small>
+      </section>
+
       <section class="workspace-section">
         <label class="workspace-switcher-label" for="workspace-switcher">Switch workspace</label>
         <select
@@ -254,10 +260,18 @@ function formatEmailPreview(email) {
         </div>
       </section>
 
-      <section class="workspace-section workspace-account-card">
-        <p class="eyebrow">Account</p>
-        <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
-        <small class="subtle">{{ currentUser?.email }}</small>
+      <section v-if="canInvite" class="workspace-section">
+        <div class="workspace-section-header">
+          <div>
+            <p class="eyebrow">Invite</p>
+            <h2>Add a teammate</h2>
+          </div>
+        </div>
+
+        <form class="invite-form" @submit.prevent="submitInvite">
+          <input v-model="inviteEmail" type="email" placeholder="Invite teammate by email" :disabled="pending" />
+          <button type="submit" :disabled="pending || !inviteEmail.trim()">Create invite</button>
+        </form>
       </section>
 
       <section class="workspace-section">
@@ -313,20 +327,6 @@ function formatEmailPreview(email) {
             </div>
           </div>
         </div>
-      </section>
-
-      <section v-if="canInvite" class="workspace-section">
-        <div class="workspace-section-header">
-          <div>
-            <p class="eyebrow">Invite</p>
-            <h2>Add a teammate</h2>
-          </div>
-        </div>
-
-        <form class="invite-form" @submit.prevent="submitInvite">
-          <input v-model="inviteEmail" type="email" placeholder="Invite teammate by email" :disabled="pending" />
-          <button type="submit" :disabled="pending || !inviteEmail.trim()">Create invite</button>
-        </form>
       </section>
 
       <section v-if="lastInviteUrl" class="workspace-section">
