@@ -84,6 +84,11 @@ const canLeaveWorkspace = computed(() => props.role === 'member' || (props.role 
 const ownerMustTransfer = computed(() => props.role === 'owner' && props.memberCount > 1 && props.ownerCount < 2);
 const canInvite = computed(() => props.role === 'owner');
 
+function handleManageWorkspace() {
+  modalMode.value = 'manage-workspace';
+  modalError.value = '';
+}
+
 function handleCreateWorkspace() {
   modalMode.value = 'create-workspace';
   workspaceForm.name = '';
@@ -274,22 +279,7 @@ function formatEmailPreview(email) {
         </select>
 
         <div class="workspace-actions">
-          <button
-            v-if="canRenameWorkspace"
-            type="button"
-            class="ghost-button muted-button"
-            :disabled="pending"
-            @click="handleRenameWorkspace"
-          >
-            Rename workspace
-          </button>
-          <button type="button" class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
-          <button v-if="canLeaveWorkspace" type="button" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
-            Leave workspace
-          </button>
-          <button v-else-if="canDeleteWorkspace" type="button" class="ghost-danger" :disabled="pending" @click="handleDeleteWorkspace">
-            Delete workspace
-          </button>
+          <button type="button" class="ghost-button muted-button" :disabled="pending" @click="handleManageWorkspace">Manage workspace</button>
         </div>
       </section>
 
@@ -409,7 +399,64 @@ function formatEmailPreview(email) {
 
   <div v-if="modalMode" class="modal-backdrop" @click.self="closeModal">
     <section class="panel action-modal">
-      <template v-if="modalMode === 'rename-workspace'">
+      <template v-if="modalMode === 'manage-workspace'">
+        <div>
+          <p class="eyebrow">Workspace actions</p>
+          <h2>Manage {{ currentWorkspaceName }}</h2>
+          <p class="subtle">Choose the next action for this workspace or start a new one.</p>
+        </div>
+
+        <div class="workspace-option-grid">
+          <button
+            v-if="canRenameWorkspace"
+            type="button"
+            class="workspace-option-card"
+            :disabled="pending"
+            @click="handleRenameWorkspace"
+          >
+            <strong>Rename workspace</strong>
+            <small>Update the workspace name for everyone.</small>
+          </button>
+
+          <button
+            type="button"
+            class="workspace-option-card"
+            :disabled="pending"
+            @click="handleCreateWorkspace"
+          >
+            <strong>New workspace</strong>
+            <small>Create a separate workspace with fresh default lists.</small>
+          </button>
+
+          <button
+            v-if="canLeaveWorkspace"
+            type="button"
+            class="workspace-option-card"
+            :disabled="pending"
+            @click="handleLeaveWorkspace"
+          >
+            <strong>Leave workspace</strong>
+            <small>{{ ownerMustTransfer ? 'Promote another owner before leaving.' : 'Remove this workspace from your account.' }}</small>
+          </button>
+
+          <button
+            v-else-if="canDeleteWorkspace"
+            type="button"
+            class="workspace-option-card workspace-option-card-danger"
+            :disabled="pending"
+            @click="handleDeleteWorkspace"
+          >
+            <strong>Delete workspace</strong>
+            <small>Permanently remove the workspace and all of its data.</small>
+          </button>
+        </div>
+
+        <div class="modal-actions modal-actions-single">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Close</button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'rename-workspace'">
         <form class="modal-form-stack" @submit.prevent="submitRenameWorkspace">
           <div>
             <p class="eyebrow">Rename workspace</p>
