@@ -676,6 +676,37 @@ textarea {
   margin-top: auto;
 }
 
+.invite-pending-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  align-items: center;
+}
+
+.invite-accept-copy {
+  max-width: 34rem;
+}
+
+.invite-accept-actions {
+  display: grid;
+  gap: 0.85rem;
+  width: 100%;
+  max-width: 300px;
+  justify-self: end;
+  align-self: stretch;
+  padding: 1rem;
+  border-radius: 24px;
+  border: 1px solid var(--field-border);
+  background: var(--surface-card);
+}
+
+.invite-accept-actions .subtle {
+  margin: 0;
+}
+
+.invite-accept-actions .ghost-button {
+  width: 100%;
+}
+
 .no-workspace-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
@@ -702,10 +733,12 @@ textarea {
 }
 
 @media (max-width: 920px) {
+  .invite-pending-panel,
   .no-workspace-panel {
     grid-template-columns: 1fr;
   }
 
+  .invite-accept-actions,
   .no-workspace-form {
     max-width: none;
     justify-self: stretch;

@@ -792,14 +792,17 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section v-if="inviteDetails" class="panel invite-accept-panel">
-        <div>
+      <section v-if="inviteDetails" class="panel invite-accept-panel invite-pending-panel">
+        <div class="invite-accept-copy">
           <p class="eyebrow">Pending invite</p>
           <h2>Join {{ inviteDetails.workspaceName }}</h2>
           <p class="subtle">Signed in as {{ currentUser?.email }}. Accept the invite to join this workspace.</p>
           <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
         </div>
-        <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
+        <div class="invite-accept-actions">
+          <p class="subtle">Invitation ready</p>
+          <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
+        </div>
       </section>
 
       <section v-else-if="!hasWorkspace" class="panel invite-accept-panel no-workspace-panel">
