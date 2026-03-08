@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthPanel from './components/AuthPanel.vue';
 import GroceryPanel from './components/GroceryPanel.vue';
 import ListSidebar from './components/ListSidebar.vue';
@@ -38,6 +38,8 @@ const pendingInvites = ref([]);
 const revokedWorkspaceId = ref(0);
 const noWorkspaceName = ref('');
 const deleteTaskTarget = ref(null);
+const boardPanelRef = ref(null);
+const listPanelRef = ref(null);
 let socket;
 let reconnectTimer;
 let allowReconnect = true;
@@ -100,6 +102,30 @@ const heroStatus = computed(() => {
   if (!hasWorkspace.value) return NO_WORKSPACE_LAST_EVENT;
   return WORKSPACE_LOADING_LAST_EVENT;
 });
+
+function isMobileViewport() {
+  return window.matchMedia?.('(max-width: 720px)').matches ?? window.innerWidth <= 720;
+}
+
+function scrollToPanel(panelRef) {
+  panelRef.value?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  });
+}
+
+function scrollToLists() {
+  if (!isMobileViewport()) return;
+  scrollToPanel(listPanelRef);
+}
+
+async function handleSelectList(listId) {
+  activeListId.value = Number(listId) || null;
+  await nextTick();
+  if (isMobileViewport()) {
+    scrollToPanel(boardPanelRef);
+  }
+}
 
 watch(
   theme,
@@ -954,38 +980,44 @@ onBeforeUnmount(() => {
           @create-invite="createInvite"
         />
 
-        <TaskPanel
-          v-if="activeList?.type !== 'grocery'"
-          :active-list="activeList"
-          :tasks="activeTasks"
-          :pending="pending"
-          :socket-state="socketState"
-          @create-task="createTask"
-          @save-task="saveTask"
-          @toggle-task="toggleTask"
-          @delete-task="openDeleteTaskModal"
-        />
+        <div ref="boardPanelRef" class="layout-anchor">
+          <TaskPanel
+            v-if="activeList?.type !== 'grocery'"
+            :active-list="activeList"
+            :tasks="activeTasks"
+            :pending="pending"
+            :socket-state="socketState"
+            @create-task="createTask"
+            @save-task="saveTask"
+            @show-lists="scrollToLists"
+            @toggle-task="toggleTask"
+            @delete-task="openDeleteTaskModal"
+          />
 
-        <GroceryPanel
-          v-else
-          :active-list="activeList"
-          :tasks="activeTasks"
-          :pending="pending"
-          :socket-state="socketState"
-          @create-task="createTask"
-          @save-task="saveTask"
-          @toggle-task="toggleTask"
-          @delete-task="openDeleteTaskModal"
-        />
+          <GroceryPanel
+            v-else
+            :active-list="activeList"
+            :tasks="activeTasks"
+            :pending="pending"
+            :socket-state="socketState"
+            @create-task="createTask"
+            @save-task="saveTask"
+            @show-lists="scrollToLists"
+            @toggle-task="toggleTask"
+            @delete-task="openDeleteTaskModal"
+          />
+        </div>
 
-        <ListSidebar
-          :current-list-id="activeListId || 0"
-          :lists="lists"
-          :pending="pending"
-          @create-list="createList"
-          @delete-list="deleteList"
-          @select-list="activeListId = $event"
-        />
+        <div ref="listPanelRef" class="layout-anchor">
+          <ListSidebar
+            :current-list-id="activeListId || 0"
+            :lists="lists"
+            :pending="pending"
+            @create-list="createList"
+            @delete-list="deleteList"
+            @select-list="handleSelectList"
+          />
+        </div>
       </section>
     </template>
 

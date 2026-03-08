@@ -20,7 +20,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['create-task', 'save-task', 'toggle-task', 'delete-task']);
+const emit = defineEmits(['create-task', 'save-task', 'show-lists', 'toggle-task', 'delete-task']);
 
 const draft = reactive({
   title: '',
@@ -100,8 +100,11 @@ function submitEdit(taskId) {
         <h2>{{ activeList?.name || 'Select a list' }}</h2>
         <p class="subtle">{{ tasks.length }} total tasks • {{ completionRate }}% complete</p>
       </div>
-      <div class="status-pill" :class="socketState">
-        {{ socketState === 'open' ? 'Realtime connected' : socketState === 'connecting' ? 'Connecting' : 'Offline sync' }}
+      <div class="task-header-actions">
+        <div class="status-pill" :class="socketState">
+          {{ socketState === 'open' ? 'Realtime connected' : socketState === 'connecting' ? 'Connecting' : 'Offline sync' }}
+        </div>
+        <button type="button" class="ghost-button muted-button mobile-list-jump" @click="emit('show-lists')">Select different list</button>
       </div>
     </header>
 
