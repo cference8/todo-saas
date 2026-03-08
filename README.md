@@ -92,6 +92,11 @@ Then edit `deploy/pi.env` and set:
 - `APPLE_TEAM_ID`
 - `APPLE_KEY_ID`
 - `APPLE_PRIVATE_KEY`
+- `INVITE_EMAILS_ENABLED`
+- `INVITE_EMAIL_PROVIDER`
+- `RESEND_API_KEY`
+- `INVITE_FROM_EMAIL`
+- `INVITE_FROM_NAME`
 - `PORT`
 
 `deploy/pi.env` is ignored by git and should exist only on the server.
@@ -221,6 +226,23 @@ Configure the return URL:
 Apple requires an HTTPS redirect URL for web sign-in and does not support `http://localhost` callbacks for this flow, so local Apple testing needs a real HTTPS domain or tunnel.
 
 If you want Apple hidden for now, leave `APPLE_AUTH_ENABLED=false`.
+
+## Invite email setup
+
+Invite delivery is feature-flagged. To enable invite emails through Resend, set:
+
+- `INVITE_EMAILS_ENABLED=true`
+- `INVITE_EMAIL_PROVIDER=resend`
+- `RESEND_API_KEY`
+- `INVITE_FROM_EMAIL`
+- `INVITE_FROM_NAME`
+
+The invite record is still created even if email delivery is disabled or fails. In that case, the UI keeps showing the invite link so it can be copied manually.
+
+Before sending from Resend, verify the sending domain or sender address in your Resend account. Their official docs cover the send-email API and domain setup:
+
+- https://resend.com/docs/api-reference/emails/send-email
+- https://resend.com/docs/dashboard/domains/introduction
 
 ## Next logical upgrades
 

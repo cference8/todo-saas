@@ -29,13 +29,17 @@ const props = defineProps({
 const emit = defineEmits(['create-invite', 'logout']);
 const inviteEmail = ref('');
 const lastInviteUrl = ref('');
+const lastInviteNotice = ref('');
+const lastInviteNoticeTone = ref('muted');
 
 const canInvite = computed(() => props.role === 'owner');
 
 function submitInvite() {
   if (!inviteEmail.value.trim()) return;
-  emit('create-invite', inviteEmail.value.trim(), (inviteUrl) => {
-    lastInviteUrl.value = inviteUrl;
+  emit('create-invite', inviteEmail.value.trim(), (invite) => {
+    lastInviteUrl.value = invite?.inviteUrl || '';
+    lastInviteNotice.value = invite?.emailDelivery?.message || 'Invite link created.';
+    lastInviteNoticeTone.value = invite?.emailDelivery?.ok ? 'success' : 'warning';
   });
   inviteEmail.value = '';
 }
@@ -80,16 +84,20 @@ function formatEmailPreview(email) {
     <div v-if="lastInviteUrl" class="invite-link-card">
       <p class="subtle">Latest invite link</p>
       <input :value="lastInviteUrl" readonly />
+      <p class="invite-feedback" :class="lastInviteNoticeTone">{{ lastInviteNotice }}</p>
       <button class="ghost-button muted-button" :disabled="pending" @click="copyLatestInvite">Copy link</button>
     </div>
 
-    <div v-if="invites.length" class="member-list">
-      <div v-for="invite in invites" :key="invite.id" class="member-row">
-        <span>
-          <strong>{{ invite.email }}</strong>
-          <small class="member-email">Pending invite • expires {{ new Date(invite.expiresAt).toLocaleString() }}</small>
-        </span>
-        <small class="member-role">{{ invite.role }}</small>
+    <div v-if="invites.length" class="invite-list">
+      <div v-for="invite in invites" :key="invite.id" class="invite-row">
+        <div class="invite-row-header">
+          <strong class="invite-email">{{ invite.email }}</strong>
+          <small class="member-role invite-role">{{ invite.role }}</small>
+        </div>
+        <div class="invite-row-meta">
+          <span class="invite-status">Pending invite</span>
+          <span>Expires {{ new Date(invite.expiresAt).toLocaleString() }}</span>
+        </div>
       </div>
     </div>
   </aside>

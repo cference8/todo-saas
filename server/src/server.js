@@ -9,6 +9,7 @@ import { WebSocketServer } from 'ws';
 import { buildAppleAuthUrl, exchangeAppleCode, isAppleAuthEnabled, parseAppleUserProfile } from './apple-oauth.js';
 import { issueAuthToken, issueOAuthState, verifyAuthToken, verifyOAuthState } from './auth.js';
 import { buildGoogleAuthUrl, exchangeGoogleCode, isGoogleAuthEnabled } from './google-oauth.js';
+import { getInviteEmailStatus, sendWorkspaceInviteEmail } from './invite-email.js';
 import {
   acceptInviteForUser,
   authenticateWithApple,
@@ -230,7 +231,8 @@ app.get('/api/auth/providers', (_req, res) => {
     },
     apple: {
       enabled: isAppleAuthEnabled()
-    }
+    },
+    inviteEmail: getInviteEmailStatus()
   });
 });
 
@@ -566,6 +568,31 @@ app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
     const baseUrl = String(req.headers.origin || process.env.CLIENT_ORIGIN || clientOrigin);
     const inviteUrl = new URL(baseUrl);
     inviteUrl.searchParams.set('invite', invite.token);
+    const inviterLabel = req.auth.email || 'A teammate';
+
+    let emailDelivery;
+    try {
+      emailDelivery = await sendWorkspaceInviteEmail({
+        inviteId: invite.id,
+        inviteUrl: inviteUrl.toString(),
+        inviteeEmail: invite.email,
+        inviterLabel,
+        workspaceName: invite.workspace?.name || 'your workspace',
+        expiresAt: invite.expiresAt
+      });
+    } catch (error) {
+      console.error('Failed to send invite email', {
+        inviteId: invite.id,
+        email: invite.email,
+        error: error.message
+      });
+      emailDelivery = {
+        attempted: true,
+        ok: false,
+        status: 'failed',
+        message: 'Invite created, but the email could not be sent.'
+      };
+    }
 
     broadcastToWorkspace(req.workspaceId, 'invite.created', { email: invite.email });
     res.status(201).json({
@@ -575,7 +602,8 @@ app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
         role: invite.role,
         createdAt: invite.createdAt,
         expiresAt: invite.expiresAt,
-        inviteUrl: inviteUrl.toString()
+        inviteUrl: inviteUrl.toString(),
+        emailDelivery
       }
     });
   } catch (error) {

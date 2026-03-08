@@ -378,7 +378,7 @@ async function createInvite(email, onCreated) {
       body: JSON.stringify({ workspaceId: workspaceId.value, email })
     });
     if (typeof onCreated === 'function') {
-      onCreated(response.invite.inviteUrl);
+      onCreated(response.invite);
     }
     await loadBootstrap();
   });
