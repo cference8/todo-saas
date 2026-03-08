@@ -10,6 +10,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  appleEnabled: {
+    type: Boolean,
+    default: false
+  },
   errorMessage: {
     type: String,
     default: ''
@@ -24,7 +28,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['submit', 'google']);
+const emit = defineEmits(['submit', 'google', 'apple']);
 
 const mode = ref('login');
 const form = reactive({
@@ -106,17 +110,28 @@ function submit() {
         <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">Register</button>
       </div>
 
-      <button
-        v-if="googleEnabled"
-        type="button"
-        class="oauth-button"
-        :disabled="pending"
-        @click="emit('google')"
-      >
-        Continue with Google
-      </button>
-      <p v-if="errorMessage && errorForMode === 'google'" class="form-error">{{ errorMessage }}</p>
-      <div v-if="googleEnabled" class="auth-separator">
+      <div v-if="googleEnabled || appleEnabled" class="oauth-actions">
+        <button
+          v-if="googleEnabled"
+          type="button"
+          class="oauth-button"
+          :disabled="pending"
+          @click="emit('google')"
+        >
+          Continue with Google
+        </button>
+        <button
+          v-if="appleEnabled"
+          type="button"
+          class="oauth-button apple"
+          :disabled="pending"
+          @click="emit('apple')"
+        >
+          Continue with Apple
+        </button>
+      </div>
+      <p v-if="errorMessage && (errorForMode === 'google' || errorForMode === 'apple')" class="form-error">{{ errorMessage }}</p>
+      <div v-if="googleEnabled || appleEnabled" class="auth-separator">
         <span>or use email</span>
       </div>
 

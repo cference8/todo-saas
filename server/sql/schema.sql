@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL DEFAULT '',
   google_subject TEXT UNIQUE,
+  apple_subject TEXT UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -63,3 +64,7 @@ CREATE TABLE IF NOT EXISTS workspace_invites (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject
 ON users(google_subject)
 WHERE google_subject IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_subject
+ON users(apple_subject)
+WHERE apple_subject IS NOT NULL;

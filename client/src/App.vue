@@ -25,6 +25,7 @@ const lastEvent = ref('Sign in to load your workspace');
 const errorMessage = ref('');
 const authErrorMode = ref('');
 const googleAuthEnabled = ref(false);
+const appleAuthEnabled = ref(false);
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
 const inviteDetails = ref(null);
 let socket;
@@ -271,6 +272,18 @@ function startGoogleAuth() {
   window.location.assign(url.toString());
 }
 
+function startAppleAuth() {
+  errorMessage.value = '';
+  authErrorMode.value = '';
+
+  const url = new URL('/api/auth/apple', window.location.origin);
+  if (inviteToken.value) {
+    url.searchParams.set('invite', inviteToken.value);
+  }
+
+  window.location.assign(url.toString());
+}
+
 async function switchWorkspace(nextWorkspaceId) {
   await withPending(async () => {
     workspaceId.value = Number(nextWorkspaceId);
@@ -390,8 +403,10 @@ async function loadAuthProviders() {
   try {
     const response = await request('/api/auth/providers', { headers: {} });
     googleAuthEnabled.value = Boolean(response.google?.enabled);
+    appleAuthEnabled.value = Boolean(response.apple?.enabled);
   } catch {
     googleAuthEnabled.value = false;
+    appleAuthEnabled.value = false;
   }
 }
 
@@ -492,9 +507,11 @@ onBeforeUnmount(() => {
       <AuthPanel
         :invite="inviteDetails"
         :google-enabled="googleAuthEnabled"
+        :apple-enabled="appleAuthEnabled"
         :error-message="errorMessage"
         :error-for-mode="authErrorMode"
         :pending="pending"
+        @apple="startAppleAuth"
         @google="startGoogleAuth"
         @submit="handleAuth"
       />

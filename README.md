@@ -84,8 +84,14 @@ Then edit `deploy/pi.env` and set:
 - `JWT_SECRET`
 - `CLIENT_ORIGIN`
 - `SERVER_ORIGIN`
+- `GOOGLE_AUTH_ENABLED`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
+- `APPLE_AUTH_ENABLED`
+- `APPLE_CLIENT_ID`
+- `APPLE_TEAM_ID`
+- `APPLE_KEY_ID`
+- `APPLE_PRIVATE_KEY`
 - `PORT`
 
 `deploy/pi.env` is ignored by git and should exist only on the server.
@@ -174,6 +180,7 @@ npm run dev
 - Register creates a user account and a first workspace
 - Login returns all workspaces the user belongs to
 - Google sign-in can either log into an existing account or create a new one with a default workspace
+- Apple sign-in can either log into an existing account or create a new one with a default workspace
 - Owners can generate invite links for email addresses from the current workspace
 - Invite links can be accepted by an existing account with the invited email, or by registering a new account for that email
 - Lists can be created as `task` lists or `grocery` lists, and item fields adapt to the selected list type
@@ -190,7 +197,30 @@ Create a Google OAuth client in Google Cloud Console with:
   - `https://tasked.lol/api/auth/google/callback`
   - `http://localhost:3001/api/auth/google/callback`
 
-Then set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `SERVER_ORIGIN` in `deploy/pi.env` or your local `server/.env`.
+Then set:
+
+- `GOOGLE_AUTH_ENABLED=true`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `SERVER_ORIGIN`
+
+## Apple Sign In setup
+
+Create a Sign in with Apple Service ID and key in the Apple Developer portal, then set:
+
+- `APPLE_AUTH_ENABLED=true`
+- `APPLE_CLIENT_ID`
+- `APPLE_TEAM_ID`
+- `APPLE_KEY_ID`
+- `APPLE_PRIVATE_KEY`
+
+Configure the return URL:
+
+- `https://tasked.lol/api/auth/apple/callback`
+
+Apple requires an HTTPS redirect URL for web sign-in and does not support `http://localhost` callbacks for this flow, so local Apple testing needs a real HTTPS domain or tunnel.
+
+If you want Apple hidden for now, leave `APPLE_AUTH_ENABLED=false`.
 
 ## Next logical upgrades
 

@@ -67,6 +67,7 @@ export async function initDb() {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL DEFAULT '',
       google_subject TEXT UNIQUE,
+      apple_subject TEXT UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -118,6 +119,7 @@ export async function initDb() {
 
   await pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_subject TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_subject TEXT;
     ALTER TABLE users ALTER COLUMN password_hash SET DEFAULT '';
     ALTER TABLE lists ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'task';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
@@ -145,6 +147,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace_id ON workspace_invites(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites(email);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject ON users(google_subject) WHERE google_subject IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_subject ON users(apple_subject) WHERE apple_subject IS NOT NULL;
   `);
 }
 
@@ -208,7 +211,12 @@ export async function registerUser({ name, email, password, workspaceName, invit
 
 export async function authenticateUser({ email, password }) {
   const result = await pool.query(
-    `SELECT id, name, email, password_hash AS "passwordHash"
+    `SELECT id,
+            name,
+            email,
+            password_hash AS "passwordHash",
+            google_subject AS "googleSubject",
+            apple_subject AS "appleSubject"
      FROM users
      WHERE email = $1`,
     [email.toLowerCase()]
@@ -222,7 +230,11 @@ export async function authenticateUser({ email, password }) {
   }
 
   if (!user.passwordHash) {
-    const error = new Error('This account uses Google sign-in. Continue with Google instead.');
+    const providers = [];
+    if (user.googleSubject) providers.push('Google');
+    if (user.appleSubject) providers.push('Apple');
+    const providerLabel = providers.length ? providers.join(' or ') : 'social sign-in';
+    const error = new Error(`This account uses ${providerLabel}. Continue with that provider instead.`);
     error.status = 401;
     throw error;
   }
@@ -311,6 +323,94 @@ export async function authenticateWithGoogle({ email, googleSubject, name, invit
         workspace = await createWorkspaceForUser(client, {
           userId: user.id,
           workspaceName: defaultWorkspaceNameFor(name)
+        });
+      }
+    }
+
+    await client.query('COMMIT');
+
+    const workspaces = await getUserWorkspaces(user.id);
+    return {
+      user,
+      workspace,
+      workspaces,
+      defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function authenticateWithApple({ email, appleSubject, name, inviteToken = null }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const normalizedEmail = email.toLowerCase();
+    const invite = inviteToken ? await getInviteRecordForRegistration(client, inviteToken) : null;
+
+    if (invite && invite.email !== normalizedEmail) {
+      const error = new Error('This invite was issued for a different email address.');
+      error.status = 403;
+      throw error;
+    }
+
+    let user = null;
+    const existingByApple = await client.query(
+      `SELECT id, name, email, apple_subject AS "appleSubject", google_subject AS "googleSubject"
+       FROM users
+       WHERE apple_subject = $1`,
+      [appleSubject]
+    );
+    user = existingByApple.rows[0] || null;
+
+    if (!user) {
+      const existingByEmail = await client.query(
+        `SELECT id, name, email, apple_subject AS "appleSubject", google_subject AS "googleSubject"
+         FROM users
+         WHERE email = $1`,
+        [normalizedEmail]
+      );
+      user = existingByEmail.rows[0] || null;
+    }
+
+    let workspace = null;
+
+    if (user) {
+      if (user.appleSubject && user.appleSubject !== appleSubject) {
+        const error = new Error('This account is already linked to a different Apple profile.');
+        error.status = 409;
+        throw error;
+      }
+
+      const nextName = String(name || '').trim();
+      const updateResult = await client.query(
+        `UPDATE users
+         SET apple_subject = COALESCE(apple_subject, $2),
+             name = CASE WHEN BTRIM(name) = '' AND $3 <> '' THEN $3 ELSE name END
+         WHERE id = $1
+         RETURNING id, name, email, created_at AS "createdAt"`,
+        [user.id, appleSubject, nextName]
+      );
+      user = updateResult.rows[0];
+    } else {
+      const nextName = String(name || '').trim() || normalizedEmail.split('@')[0];
+      const createdUser = await client.query(
+        `INSERT INTO users (name, email, password_hash, apple_subject)
+         VALUES ($1, $2, '', $3)
+         RETURNING id, name, email, created_at AS "createdAt"`,
+        [nextName, normalizedEmail, appleSubject]
+      );
+      user = createdUser.rows[0];
+
+      if (!invite) {
+        workspace = await createWorkspaceForUser(client, {
+          userId: user.id,
+          workspaceName: defaultWorkspaceNameFor(user.name)
         });
       }
     }

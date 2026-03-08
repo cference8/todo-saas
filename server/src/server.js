@@ -6,10 +6,12 @@ import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
 import { WebSocketServer } from 'ws';
+import { buildAppleAuthUrl, exchangeAppleCode, isAppleAuthEnabled, parseAppleUserProfile } from './apple-oauth.js';
 import { issueAuthToken, issueOAuthState, verifyAuthToken, verifyOAuthState } from './auth.js';
 import { buildGoogleAuthUrl, exchangeGoogleCode, isGoogleAuthEnabled } from './google-oauth.js';
 import {
   acceptInviteForUser,
+  authenticateWithApple,
   authenticateWithGoogle,
   authenticateUser,
   createList,
@@ -32,7 +34,9 @@ const wss = new WebSocketServer({ noServer: true });
 const port = Number(process.env.PORT || 3001);
 const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const serverOrigin = process.env.SERVER_ORIGIN || (clientOrigin.includes('localhost:5173') ? `http://localhost:${port}` : clientOrigin);
+const appleCallbackPath = '/api/auth/apple/callback';
 const googleCallbackPath = '/api/auth/google/callback';
+const appleStateCookieName = 'todo_saas_apple_oauth_state';
 const googleStateCookieName = 'todo_saas_google_oauth_state';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
@@ -40,6 +44,7 @@ const socketGroups = new Map();
 
 app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 function sendError(res, error) {
   const status = error.status || 500;
@@ -94,14 +99,26 @@ function getGoogleRedirectUri() {
   return new URL(googleCallbackPath, serverOrigin).toString();
 }
 
-function getGoogleCallbackCookie() {
-  return serializeCookie(googleStateCookieName, '', {
+function getAppleRedirectUri() {
+  return new URL(appleCallbackPath, serverOrigin).toString();
+}
+
+function getClearedOAuthCookie(name, pathName) {
+  return serializeCookie(name, '', {
     maxAge: 0,
-    path: googleCallbackPath,
+    path: pathName,
     httpOnly: true,
     sameSite: 'Lax',
     secure: serverOrigin.startsWith('https://')
   });
+}
+
+function getGoogleCallbackCookie() {
+  return getClearedOAuthCookie(googleStateCookieName, googleCallbackPath);
+}
+
+function getAppleCallbackCookie() {
+  return getClearedOAuthCookie(appleStateCookieName, appleCallbackPath);
 }
 
 function buildClientRedirect({ inviteToken = '', hashParams = {} }) {
@@ -118,14 +135,16 @@ function buildClientRedirect({ inviteToken = '', hashParams = {} }) {
   return redirectUrl.toString();
 }
 
-function redirectWithOAuthError(res, { message, inviteToken = '' }) {
-  res.setHeader('Set-Cookie', getGoogleCallbackCookie());
+function redirectWithOAuthError(res, { message, inviteToken = '', authMode = 'google', cookie = null }) {
+  if (cookie) {
+    res.setHeader('Set-Cookie', cookie);
+  }
   res.redirect(
     buildClientRedirect({
       inviteToken,
       hashParams: {
         authError: message,
-        authMode: 'google'
+        authMode
       }
     })
   );
@@ -208,6 +227,9 @@ app.get('/api/auth/providers', (_req, res) => {
   res.json({
     google: {
       enabled: isGoogleAuthEnabled()
+    },
+    apple: {
+      enabled: isAppleAuthEnabled()
     }
   });
 });
@@ -273,7 +295,7 @@ app.get('/api/auth/google', async (req, res) => {
   try {
     const inviteToken = String(req.query.invite || req.query.inviteToken || '').trim();
     const nonce = crypto.randomBytes(24).toString('hex');
-    const state = issueOAuthState({ nonce, inviteToken });
+    const state = issueOAuthState({ nonce, inviteToken, provider: 'google' });
 
     res.setHeader(
       'Set-Cookie',
@@ -308,7 +330,9 @@ app.get('/api/auth/google/callback', async (req, res) => {
     if (errorCode) {
       redirectWithOAuthError(res, {
         message: 'Google sign-in was canceled or denied.',
-        inviteToken: inviteTokenFromQuery
+        inviteToken: inviteTokenFromQuery,
+        authMode: 'google',
+        cookie: getGoogleCallbackCookie()
       });
       return;
     }
@@ -316,18 +340,25 @@ app.get('/api/auth/google/callback', async (req, res) => {
     if (!code || !stateToken) {
       redirectWithOAuthError(res, {
         message: 'Google sign-in returned an incomplete response.',
-        inviteToken: inviteTokenFromQuery
+        inviteToken: inviteTokenFromQuery,
+        authMode: 'google',
+        cookie: getGoogleCallbackCookie()
       });
       return;
     }
 
     const state = verifyOAuthState(stateToken);
+    if (state.provider !== 'google') {
+      throw new Error('Invalid Google sign-in state.');
+    }
     callbackInviteToken = state.inviteToken || inviteTokenFromQuery;
     const cookies = parseCookies(req.headers.cookie);
     if (!cookies[googleStateCookieName] || cookies[googleStateCookieName] !== state.nonce) {
       redirectWithOAuthError(res, {
         message: 'Google sign-in could not be verified. Please try again.',
-        inviteToken: callbackInviteToken
+        inviteToken: callbackInviteToken,
+        authMode: 'google',
+        cookie: getGoogleCallbackCookie()
       });
       return;
     }
@@ -356,7 +387,125 @@ app.get('/api/auth/google/callback', async (req, res) => {
   } catch (error) {
     redirectWithOAuthError(res, {
       message: error.message || 'Google sign-in failed.',
-      inviteToken: callbackInviteToken
+      inviteToken: callbackInviteToken,
+      authMode: 'google',
+      cookie: getGoogleCallbackCookie()
+    });
+  }
+});
+
+app.get('/api/auth/apple', async (req, res) => {
+  if (!isAppleAuthEnabled()) {
+    res.status(503).json({ error: 'Apple sign-in is not configured.' });
+    return;
+  }
+
+  try {
+    const inviteToken = String(req.query.invite || req.query.inviteToken || '').trim();
+    const nonce = crypto.randomBytes(24).toString('hex');
+    const state = issueOAuthState({ nonce, inviteToken, provider: 'apple' });
+
+    res.setHeader(
+      'Set-Cookie',
+      serializeCookie(appleStateCookieName, nonce, {
+        maxAge: 600,
+        path: appleCallbackPath,
+        httpOnly: true,
+        sameSite: 'Lax',
+        secure: serverOrigin.startsWith('https://')
+      })
+    );
+    res.redirect(
+      buildAppleAuthUrl({
+        redirectUri: getAppleRedirectUri(),
+        state,
+        nonce: crypto.randomBytes(16).toString('hex')
+      })
+    );
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/auth/apple/callback', async (req, res) => {
+  const inviteTokenFromQuery = String(req.query.invite || req.query.inviteToken || '').trim();
+  let callbackInviteToken = inviteTokenFromQuery;
+
+  try {
+    const code = String(req.body.code || '').trim();
+    const stateToken = String(req.body.state || '').trim();
+    const errorCode = String(req.body.error || '').trim();
+
+    if (errorCode) {
+      redirectWithOAuthError(res, {
+        message: 'Apple sign-in was canceled or denied.',
+        inviteToken: inviteTokenFromQuery,
+        authMode: 'apple',
+        cookie: getAppleCallbackCookie()
+      });
+      return;
+    }
+
+    if (!code || !stateToken) {
+      redirectWithOAuthError(res, {
+        message: 'Apple sign-in returned an incomplete response.',
+        inviteToken: inviteTokenFromQuery,
+        authMode: 'apple',
+        cookie: getAppleCallbackCookie()
+      });
+      return;
+    }
+
+    const state = verifyOAuthState(stateToken);
+    if (state.provider !== 'apple') {
+      throw new Error('Invalid Apple sign-in state.');
+    }
+
+    callbackInviteToken = state.inviteToken || inviteTokenFromQuery;
+    const cookies = parseCookies(req.headers.cookie);
+    if (!cookies[appleStateCookieName] || cookies[appleStateCookieName] !== state.nonce) {
+      redirectWithOAuthError(res, {
+        message: 'Apple sign-in could not be verified. Please try again.',
+        inviteToken: callbackInviteToken,
+        authMode: 'apple',
+        cookie: getAppleCallbackCookie()
+      });
+      return;
+    }
+
+    const tokenResult = await exchangeAppleCode({
+      code,
+      redirectUri: getAppleRedirectUri()
+    });
+    if (!tokenResult.emailVerified) {
+      throw new Error('Apple did not return a verified email address for this account.');
+    }
+
+    const appleUser = parseAppleUserProfile(req.body.user);
+    const name = appleUser?.name || tokenResult.email.split('@')[0];
+    const authResult = await authenticateWithApple({
+      email: appleUser?.email || tokenResult.email,
+      appleSubject: tokenResult.appleSubject,
+      name,
+      inviteToken: callbackInviteToken || null
+    });
+    const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
+
+    res.setHeader('Set-Cookie', getAppleCallbackCookie());
+    res.redirect(
+      buildClientRedirect({
+        inviteToken: callbackInviteToken,
+        hashParams: {
+          token
+        }
+      })
+    );
+  } catch (error) {
+    redirectWithOAuthError(res, {
+      message: error.message || 'Apple sign-in failed.',
+      inviteToken: callbackInviteToken,
+      authMode: 'apple',
+      cookie: getAppleCallbackCookie()
     });
   }
 });

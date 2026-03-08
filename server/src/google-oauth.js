@@ -3,13 +3,21 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
 const GOOGLE_SCOPES = ['openid', 'email', 'profile'];
 
+function isFlagEnabled(value) {
+  return String(value || '').trim().toLowerCase() === 'true';
+}
+
 export function isGoogleAuthEnabled() {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  return Boolean(
+    isFlagEnabled(process.env.GOOGLE_AUTH_ENABLED) &&
+    process.env.GOOGLE_CLIENT_ID &&
+    process.env.GOOGLE_CLIENT_SECRET
+  );
 }
 
 export function buildGoogleAuthUrl({ redirectUri, state }) {
   if (!isGoogleAuthEnabled()) {
-    const error = new Error('Google sign-in is not configured.');
+    const error = new Error('Google sign-in is disabled or not configured.');
     error.status = 503;
     throw error;
   }
@@ -28,7 +36,7 @@ export function buildGoogleAuthUrl({ redirectUri, state }) {
 
 export async function exchangeGoogleCode({ code, redirectUri }) {
   if (!isGoogleAuthEnabled()) {
-    const error = new Error('Google sign-in is not configured.');
+    const error = new Error('Google sign-in is disabled or not configured.');
     error.status = 503;
     throw error;
   }

@@ -355,6 +355,11 @@ textarea {
   gap: 0.9rem;
 }
 
+.oauth-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .invite-form,
 .invite-link-card {
   margin-top: auto;
@@ -619,6 +624,16 @@ textarea {
 
 .oauth-button:hover {
   background: rgba(246, 241, 232, 0.9);
+}
+
+.oauth-button.apple {
+  background: #111111;
+  color: #ffffff;
+  border-color: #111111;
+}
+
+.oauth-button.apple:hover {
+  background: #222222;
 }
 
 .auth-separator {
