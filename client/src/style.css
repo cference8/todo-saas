@@ -869,6 +869,41 @@ textarea {
   gap: 0.9rem;
 }
 
+.auth-password-field {
+  position: relative;
+}
+
+.auth-password-field-with-toggle input {
+  padding-right: 5.5rem;
+}
+
+.auth-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.55rem;
+  transform: translateY(-50%);
+  min-height: 38px;
+  padding: 0 0.85rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-soft-bg);
+  color: var(--accent-soft-text);
+  font-weight: 600;
+}
+
+.auth-password-toggle:hover {
+  background: var(--field-border);
+}
+
+.auth-password-toggle:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.auth-submit-button {
+  min-height: 52px;
+}
+
 .oauth-actions {
   display: grid;
   gap: 0.75rem;
@@ -969,7 +1004,7 @@ textarea {
 .ghost-button,
 .ghost-danger,
 .icon-button,
-.auth-form button,
+.auth-submit-button,
 .invite-form button,
 .invite-link-card button,
 .auth-toggle button {
@@ -979,7 +1014,7 @@ textarea {
 
 .composer button,
 .ghost-button,
-.auth-form button,
+.auth-submit-button,
 .invite-form button,
 .invite-link-card button,
 .auth-toggle button.active {
@@ -990,7 +1025,7 @@ textarea {
 
 .composer button:hover,
 .ghost-button:hover,
-.auth-form button:hover,
+.auth-submit-button:hover,
 .invite-form button:hover,
 .invite-link-card button:hover {
   background: var(--accent-hover);
@@ -1477,7 +1512,7 @@ textarea {
   .composer button,
   .ghost-button,
   .ghost-danger,
-  .auth-form button,
+  .auth-submit-button,
   .invite-form button,
   .modal-actions button {
     width: 100%;

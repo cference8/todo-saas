@@ -343,8 +343,8 @@ app.post('/api/auth/register', async (req, res) => {
     const workspaceName = String(req.body.workspaceName || '').trim();
     const inviteToken = req.body.inviteToken ? String(req.body.inviteToken) : null;
 
-    if (!name || !email || !password || (!inviteToken && !workspaceName)) {
-      res.status(400).json({ error: 'name, email, password, and workspaceName are required unless joining by invite.' });
+    if (!name || !email || !password) {
+      res.status(400).json({ error: 'name, email, and password are required.' });
       return;
     }
 

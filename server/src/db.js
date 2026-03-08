@@ -242,11 +242,12 @@ export async function registerUser({ name, email, password, workspaceName, invit
     const user = userResult.rows[0];
 
     let workspace = null;
+    const defaultWorkspaceName = String(workspaceName || '').trim() || defaultWorkspaceNameFor(name);
 
     if (!invite) {
       workspace = await createWorkspaceForUser(client, {
         userId: user.id,
-        workspaceName
+        workspaceName: defaultWorkspaceName
       });
     }
 
