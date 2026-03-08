@@ -50,27 +50,24 @@ function buildInviteEmail({ inviteUrl, inviteeEmail, inviterLabel, workspaceName
   const safeInviterLabel = escapeHtml(inviterLabel);
   const safeInviteUrl = escapeHtml(inviteUrl);
   const expiryLabel = escapeHtml(formatInviteExpiry(expiresAt));
+  const subject = `${inviterLabel} invited you to join ${workspaceName}`;
 
   return {
-    subject: `Join ${workspaceName} on Tasked`,
+    subject,
     text: [
-      `${inviterLabel} invited ${inviteeEmail} to join ${workspaceName} on Tasked.`,
+      `${inviterLabel} invited you to join ${workspaceName}.`,
       '',
-      `Open the invite: ${inviteUrl}`,
+      `Invitee: ${inviteeEmail}`,
+      `Accept invite: ${inviteUrl}`,
       `This invite expires ${formatInviteExpiry(expiresAt)}.`
     ].join('\n'),
     html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e2933; max-width: 560px; margin: 0 auto; padding: 24px;">
-        <p style="margin: 0 0 12px; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: #6a7a89;">Tasked workspace invite</p>
-        <h1 style="margin: 0 0 16px; font-size: 28px; line-height: 1.2;">Join ${safeWorkspaceName}</h1>
-        <p style="margin: 0 0 12px;">${safeInviterLabel} invited <strong>${safeInviteeEmail}</strong> to collaborate in <strong>${safeWorkspaceName}</strong>.</p>
-        <p style="margin: 0 0 24px;">Use the button below to accept the invite.</p>
-        <p style="margin: 0 0 24px;">
-          <a href="${safeInviteUrl}" style="display: inline-block; background: #0d8b73; color: #ffffff; text-decoration: none; padding: 14px 22px; border-radius: 999px; font-weight: 700;">Open invite</a>
-        </p>
-        <p style="margin: 0 0 12px; font-size: 14px; color: #6a7a89;">This invite expires ${expiryLabel}.</p>
-        <p style="margin: 0; font-size: 14px; color: #6a7a89;">If the button does not work, copy and paste this link into your browser:</p>
-        <p style="margin: 8px 0 0; font-size: 14px; word-break: break-all;"><a href="${safeInviteUrl}" style="color: #0d8b73;">${safeInviteUrl}</a></p>
+      <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #1e2933; max-width: 560px; margin: 0 auto; padding: 20px 24px;">
+        <p style="margin: 0 0 12px;">${safeInviterLabel} invited you to join <strong>${safeWorkspaceName}</strong>.</p>
+        <p style="margin: 0 0 12px;">This invite was sent to <strong>${safeInviteeEmail}</strong>.</p>
+        <p style="margin: 0 0 12px;">Accept the invite here:</p>
+        <p style="margin: 0 0 16px; word-break: break-all;"><a href="${safeInviteUrl}" style="color: #0b66c3; text-decoration: underline;">${safeInviteUrl}</a></p>
+        <p style="margin: 0; color: #5b6b79;">This invite expires ${expiryLabel}.</p>
       </div>
     `
   };
@@ -90,6 +87,7 @@ export async function sendWorkspaceInviteEmail({
   inviteUrl,
   inviteeEmail,
   inviterLabel,
+  replyTo,
   workspaceName,
   expiresAt
 }) {
@@ -142,7 +140,8 @@ export async function sendWorkspaceInviteEmail({
       to: [inviteeEmail],
       subject: email.subject,
       html: email.html,
-      text: email.text
+      text: email.text,
+      ...(replyTo ? { reply_to: replyTo } : {})
     })
   });
 

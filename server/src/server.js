@@ -72,6 +72,7 @@ async function deliverInviteEmail({ req, invite }) {
       inviteUrl,
       inviteeEmail: invite.email,
       inviterLabel,
+      replyTo: req.auth.email || '',
       workspaceName: invite.workspace?.name || 'your workspace',
       expiresAt: invite.expiresAt
     });
