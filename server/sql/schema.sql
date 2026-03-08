@@ -2,9 +2,12 @@ CREATE TABLE IF NOT EXISTS users (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
+  site_role TEXT NOT NULL DEFAULT 'USER',
   password_hash TEXT NOT NULL DEFAULT '',
   google_subject TEXT UNIQUE,
   apple_subject TEXT UNIQUE,
+  last_login_at TIMESTAMPTZ,
+  last_active_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -71,6 +74,44 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  event_type TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT,
+  workspace_id BIGINT REFERENCES workspaces(id) ON DELETE SET NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS system_error_logs (
+  id BIGSERIAL PRIMARY KEY,
+  level TEXT NOT NULL DEFAULT 'error',
+  source TEXT NOT NULL,
+  message TEXT NOT NULL,
+  stack TEXT NOT NULL DEFAULT '',
+  status_code INTEGER,
+  request_method TEXT NOT NULL DEFAULT '',
+  request_path TEXT NOT NULL DEFAULT '',
+  user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+UPDATE users
+SET site_role = 'USER'
+WHERE site_role IS NULL
+   OR BTRIM(site_role) = '';
+
+UPDATE users
+SET site_role = UPPER(site_role)
+WHERE site_role <> UPPER(site_role);
+
+UPDATE users
+SET site_role = 'USER'
+WHERE site_role NOT IN ('USER', 'SUPER_ADMIN');
+
 UPDATE workspace_invites
 SET email = LOWER(email)
 WHERE email <> LOWER(email);
@@ -117,8 +158,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_one_pending_email
 ON workspace_invites(workspace_id, email)
 WHERE accepted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_users_site_role
+ON users(site_role);
+
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id
 ON password_reset_tokens(user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash
 ON password_reset_tokens(token_hash);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
+ON audit_logs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_user_id
+ON audit_logs(actor_user_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_id
+ON audit_logs(workspace_id);
+
+CREATE INDEX IF NOT EXISTS idx_system_error_logs_created_at
+ON system_error_logs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_system_error_logs_source
+ON system_error_logs(source);
+
+CREATE INDEX IF NOT EXISTS idx_system_error_logs_user_id
+ON system_error_logs(user_id);

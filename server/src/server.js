@@ -26,14 +26,19 @@ import {
   deleteList,
   deleteTask,
   ensureMembership,
+  getAdminDashboardSnapshot,
+  getAuthContext,
   getAuthSession,
   getInviteByToken,
   getWorkspaceInviteLink,
   getSnapshot,
   initDb,
   leaveWorkspace,
+  markUserLogin,
   renameWorkspace,
   promoteWorkspaceMemberToOwner,
+  recordAuditLog,
+  recordSystemErrorLog,
   removeWorkspaceMember,
   registerUser,
   resendWorkspaceInvite,
@@ -62,8 +67,53 @@ app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+function logBackgroundFailure(message, error, details = {}) {
+  console.error(message, {
+    ...details,
+    error: error?.message || String(error)
+  });
+}
+
+function logAuditEvent(entry) {
+  recordAuditLog(entry).catch((error) => {
+    logBackgroundFailure('Failed to record audit log', error, {
+      eventType: entry?.eventType
+    });
+  });
+}
+
+function logSystemEvent(entry) {
+  recordSystemErrorLog(entry).catch((error) => {
+    logBackgroundFailure('Failed to record system error log', error, {
+      source: entry?.source
+    });
+  });
+}
+
 function sendError(res, error) {
   const status = error.status || 500;
+  const req = res.req;
+
+  if (status >= 500) {
+    logSystemEvent({
+      level: 'error',
+      source: 'api',
+      message: error.message || 'Internal server error.',
+      stack: error.stack || '',
+      statusCode: status,
+      requestMethod: req?.method || '',
+      requestPath: req?.originalUrl || req?.url || '',
+      userId: req?.auth?.userId || null,
+      metadata: {
+        params: req?.params || {},
+        query: req?.query || {},
+        bodyKeys: Object.keys(req?.body || {}).filter((key) => (
+          !['password', 'currentPassword', 'newPassword', 'resetToken'].includes(key)
+        ))
+      }
+    });
+  }
+
   res.status(status).json({ error: error.message || 'Internal server error.' });
 }
 
@@ -83,7 +133,7 @@ function buildPasswordResetUrl(req, resetToken) {
 
 async function deliverInviteEmail({ req, invite }) {
   const inviteUrl = buildInviteUrl(req, invite.token);
-  const inviterLabel = invite.invitedByName || req.auth.email || 'A teammate';
+  const inviterLabel = invite.invitedByName || req.currentUser?.email || req.auth.email || 'A teammate';
 
   let emailDelivery;
   try {
@@ -101,6 +151,17 @@ async function deliverInviteEmail({ req, invite }) {
       inviteId: invite.id,
       email: invite.email,
       error: error.message
+    });
+    logSystemEvent({
+      level: 'error',
+      source: 'invite-email',
+      message: 'Failed to send invite email.',
+      stack: error.stack || '',
+      userId: req?.auth?.userId || null,
+      metadata: {
+        inviteId: invite.id,
+        email: invite.email
+      }
     });
     emailDelivery = {
       attempted: true,
@@ -143,6 +204,18 @@ async function deliverPasswordResetEmail({ req, resetRequest }) {
         kind: resetRequest.kind,
         status: emailDelivery.status
       });
+      logSystemEvent({
+        level: 'warning',
+        source: 'password-reset-email',
+        message: 'Password link email was not sent.',
+        userId: resetRequest.userId,
+        metadata: {
+          resetId: resetRequest.id,
+          email: resetRequest.email,
+          kind: resetRequest.kind,
+          status: emailDelivery.status
+        }
+      });
     }
   } catch (error) {
     console.error('Failed to send password link email', {
@@ -151,6 +224,18 @@ async function deliverPasswordResetEmail({ req, resetRequest }) {
       email: resetRequest.email,
       kind: resetRequest.kind,
       error: error.message
+    });
+    logSystemEvent({
+      level: 'error',
+      source: 'password-reset-email',
+      message: 'Failed to send password link email.',
+      stack: error.stack || '',
+      userId: resetRequest.userId,
+      metadata: {
+        resetId: resetRequest.id,
+        email: resetRequest.email,
+        kind: resetRequest.kind
+      }
     });
   }
 }
@@ -254,7 +339,7 @@ function redirectWithOAuthError(res, { message, inviteToken = '', authMode = 'go
   );
 }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
@@ -263,12 +348,45 @@ function requireAuth(req, res, next) {
     return;
   }
 
+  let auth;
   try {
-    req.auth = verifyAuthToken(token);
-    next();
+    auth = verifyAuthToken(token);
   } catch {
     res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
   }
+
+  try {
+    const currentUser = await getAuthContext(auth.userId);
+    if (!currentUser) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+
+    req.auth = auth;
+    req.currentUser = currentUser;
+    next();
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+function requireAppUser(req, res, next) {
+  if (req.currentUser?.siteRole === 'SUPER_ADMIN') {
+    res.status(403).json({ error: 'Super admins can only access the admin dashboard.' });
+    return;
+  }
+
+  next();
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (req.currentUser?.siteRole !== 'SUPER_ADMIN') {
+    res.status(403).json({ error: 'Super admin access is required.' });
+    return;
+  }
+
+  next();
 }
 
 async function requireWorkspace(req, res, next) {
@@ -399,9 +517,27 @@ app.post('/api/auth/register', async (req, res) => {
       return;
     }
 
-    const { user, workspace, workspaces } = await registerUser({ name, email, password, workspaceName, inviteToken });
+    const { user, workspace, workspaces, defaultWorkspaceId } = await registerUser({
+      name,
+      email,
+      password,
+      workspaceName,
+      inviteToken
+    });
+    await markUserLogin(user.id);
+    logAuditEvent({
+      actorUserId: user.id,
+      eventType: 'auth.register',
+      targetType: 'user',
+      targetId: user.id,
+      workspaceId: workspace?.id || null,
+      metadata: {
+        provider: 'password',
+        workspaceCreated: Boolean(workspace?.id)
+      }
+    });
     const token = issueAuthToken({ userId: user.id, email: user.email });
-    res.status(201).json({ token, user, workspaces, defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null });
+    res.status(201).json({ token, user, workspaces, defaultWorkspaceId: defaultWorkspaceId || workspace?.id || null });
   } catch (error) {
     sendError(res, error);
   }
@@ -418,6 +554,15 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
     const resetRequest = await createPasswordResetRequest({ email });
     if (resetRequest) {
       await deliverPasswordResetEmail({ req, resetRequest });
+      logAuditEvent({
+        actorUserId: resetRequest.userId,
+        eventType: 'auth.password_reset.requested',
+        targetType: 'user',
+        targetId: resetRequest.userId,
+        metadata: {
+          kind: resetRequest.kind
+        }
+      });
     }
 
     res.json({ notice: PASSWORD_RESET_REQUEST_NOTICE });
@@ -437,6 +582,13 @@ app.post('/api/auth/password-reset/complete', async (req, res) => {
     }
 
     const authResult = await resetPasswordWithToken({ resetToken, password });
+    await markUserLogin(authResult.user.id);
+    logAuditEvent({
+      actorUserId: authResult.user.id,
+      eventType: 'auth.password_reset.completed',
+      targetType: 'user',
+      targetId: authResult.user.id
+    });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
     res.json({
       token,
@@ -496,12 +648,31 @@ app.patch('/api/auth/profile', requireAuth, async (req, res) => {
       pendingInvites: session.pendingInvites,
       defaultWorkspaceId: session.defaultWorkspaceId
     });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'profile.updated',
+      targetType: 'user',
+      targetId: req.auth.userId,
+      metadata: {
+        nameChanged: updateResult.nameChanged,
+        passwordChanged: Boolean(newPassword)
+      }
+    });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/workspaces', requireAuth, async (req, res) => {
+app.get('/api/admin/dashboard', requireAuth, requireSuperAdmin, async (req, res) => {
+  try {
+    const dashboard = await getAdminDashboardSnapshot();
+    res.json(dashboard);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/workspaces', requireAuth, requireAppUser, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     if (!name) {
@@ -511,6 +682,16 @@ app.post('/api/workspaces', requireAuth, async (req, res) => {
 
     const workspace = await createWorkspace({ userId: req.auth.userId, name });
     const session = await getAuthSession(req.auth.userId);
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'workspace.created',
+      targetType: 'workspace',
+      targetId: workspace.id,
+      workspaceId: workspace.id,
+      metadata: {
+        workspaceName: workspace.name
+      }
+    });
     res.status(201).json({
       workspace,
       workspaces: session.workspaces,
@@ -521,7 +702,7 @@ app.post('/api/workspaces', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/workspaces/:id', requireAuth, async (req, res) => {
+app.patch('/api/workspaces/:id', requireAuth, requireAppUser, async (req, res) => {
   try {
     const workspaceId = Number(req.params.id);
     const name = String(req.body.name || '').trim();
@@ -544,6 +725,17 @@ app.patch('/api/workspaces/:id', requireAuth, async (req, res) => {
       workspaceId,
       name: workspace.name
     });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'workspace.renamed',
+      targetType: 'workspace',
+      targetId: workspaceId,
+      workspaceId,
+      metadata: {
+        previousName: workspace.previousName,
+        workspaceName: workspace.name
+      }
+    });
 
     res.json({ workspace });
   } catch (error) {
@@ -551,7 +743,7 @@ app.patch('/api/workspaces/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/workspaces/:id/leave', requireAuth, async (req, res) => {
+app.post('/api/workspaces/:id/leave', requireAuth, requireAppUser, async (req, res) => {
   try {
     const workspaceId = Number(req.params.id);
     if (!workspaceId) {
@@ -571,6 +763,16 @@ app.post('/api/workspaces/:id/leave', requireAuth, async (req, res) => {
     broadcastToWorkspace(workspaceId, 'member.left', {
       userId: req.auth.userId
     });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'workspace.left',
+      targetType: 'workspace',
+      targetId: workspaceId,
+      workspaceId,
+      metadata: {
+        workspaceName: leftWorkspace.workspaceName
+      }
+    });
 
     const session = await getAuthSession(req.auth.userId);
     res.json({
@@ -583,7 +785,7 @@ app.post('/api/workspaces/:id/leave', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/workspaces/:id', requireAuth, async (req, res) => {
+app.delete('/api/workspaces/:id', requireAuth, requireAppUser, async (req, res) => {
   try {
     const workspaceId = Number(req.params.id);
     if (!workspaceId) {
@@ -603,6 +805,17 @@ app.delete('/api/workspaces/:id', requireAuth, async (req, res) => {
         reason: `${deletedWorkspace.workspaceName} was deleted.`
       });
     }
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'workspace.deleted',
+      targetType: 'workspace',
+      targetId: workspaceId,
+      workspaceId,
+      metadata: {
+        workspaceName: deletedWorkspace.workspaceName,
+        impactedMembers: deletedWorkspace.members.length
+      }
+    });
 
     const session = await getAuthSession(req.auth.userId);
     res.json({
@@ -625,6 +838,16 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const authResult = await authenticateUser({ email, password });
+    await markUserLogin(authResult.user.id);
+    logAuditEvent({
+      actorUserId: authResult.user.id,
+      eventType: 'auth.login',
+      targetType: 'user',
+      targetId: authResult.user.id,
+      metadata: {
+        provider: 'password'
+      }
+    });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
     res.json({ token, user: authResult.user, workspaces: authResult.workspaces, defaultWorkspaceId: authResult.defaultWorkspaceId });
   } catch (error) {
@@ -718,6 +941,16 @@ app.get('/api/auth/google/callback', async (req, res) => {
       googleSubject: profile.googleSubject,
       name: profile.name,
       inviteToken: callbackInviteToken || null
+    });
+    await markUserLogin(authResult.user.id);
+    logAuditEvent({
+      actorUserId: authResult.user.id,
+      eventType: 'auth.oauth.google',
+      targetType: 'user',
+      targetId: authResult.user.id,
+      metadata: {
+        provider: 'google'
+      }
     });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
 
@@ -835,6 +1068,16 @@ app.post('/api/auth/apple/callback', async (req, res) => {
       name,
       inviteToken: callbackInviteToken || null
     });
+    await markUserLogin(authResult.user.id);
+    logAuditEvent({
+      actorUserId: authResult.user.id,
+      eventType: 'auth.oauth.apple',
+      targetType: 'user',
+      targetId: authResult.user.id,
+      metadata: {
+        provider: 'apple'
+      }
+    });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
 
     res.setHeader('Set-Cookie', getAppleCallbackCookie());
@@ -856,7 +1099,7 @@ app.post('/api/auth/apple/callback', async (req, res) => {
   }
 });
 
-app.get('/api/bootstrap', requireAuth, async (req, res) => {
+app.get('/api/bootstrap', requireAuth, requireAppUser, async (req, res) => {
   try {
     const workspaceId = Number(req.query.workspaceId);
     if (!workspaceId) {
@@ -895,7 +1138,7 @@ app.get('/api/invites/:token', async (req, res) => {
   }
 });
 
-app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
+app.post('/api/invites', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     if (!['owner', 'member'].includes(req.membership.role)) {
       res.status(403).json({ error: 'You do not have permission to create invites in this workspace.' });
@@ -912,13 +1155,23 @@ app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
     const invitePayload = await deliverInviteEmail({ req, invite });
 
     broadcastToWorkspace(req.workspaceId, 'invite.created', { email: invite.email });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'invite.created',
+      targetType: 'invite',
+      targetId: invite.id,
+      workspaceId: req.workspaceId,
+      metadata: {
+        email: invite.email
+      }
+    });
     res.status(201).json({ invite: invitePayload });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/invites/:id/resend', requireAuth, requireWorkspace, async (req, res) => {
+app.post('/api/invites/:id/resend', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     if (!['owner', 'member'].includes(req.membership.role)) {
       res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
@@ -933,13 +1186,23 @@ app.post('/api/invites/:id/resend', requireAuth, requireWorkspace, async (req, r
     const invitePayload = await deliverInviteEmail({ req, invite });
 
     broadcastToWorkspace(req.workspaceId, 'invite.resent', { inviteId: invite.id, email: invite.email });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'invite.resent',
+      targetType: 'invite',
+      targetId: invite.id,
+      workspaceId: req.workspaceId,
+      metadata: {
+        email: invite.email
+      }
+    });
     res.json({ invite: invitePayload });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/invites/:id/link', requireAuth, requireWorkspace, async (req, res) => {
+app.post('/api/invites/:id/link', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     if (!['owner', 'member'].includes(req.membership.role)) {
       res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
@@ -967,7 +1230,7 @@ app.post('/api/invites/:id/link', requireAuth, requireWorkspace, async (req, res
   }
 });
 
-app.delete('/api/invites/:id', requireAuth, requireWorkspace, async (req, res) => {
+app.delete('/api/invites/:id', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     if (!['owner', 'member'].includes(req.membership.role)) {
       res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
@@ -984,13 +1247,23 @@ app.delete('/api/invites/:id', requireAuth, requireWorkspace, async (req, res) =
     }
 
     broadcastToWorkspace(req.workspaceId, 'invite.cancelled', { inviteId: invite.id, email: invite.email });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'invite.cancelled',
+      targetType: 'invite',
+      targetId: invite.id,
+      workspaceId: req.workspaceId,
+      metadata: {
+        email: invite.email
+      }
+    });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/invites/accept', requireAuth, async (req, res) => {
+app.post('/api/invites/accept', requireAuth, requireAppUser, async (req, res) => {
   try {
     const inviteToken = String(req.body.inviteToken || '').trim();
     const inviteId = Number(req.body.inviteId || 0);
@@ -1003,16 +1276,23 @@ app.post('/api/invites/accept', requireAuth, async (req, res) => {
       inviteToken: inviteToken || null,
       inviteId: inviteId || null,
       userId: req.auth.userId,
-      email: req.auth.email
+      email: req.currentUser.email
     });
 
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'invite.accepted',
+      targetType: 'workspace',
+      targetId: workspaceId,
+      workspaceId
+    });
     res.status(201).json({ workspaceId });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.delete('/api/members/:id', requireAuth, requireWorkspace, async (req, res) => {
+app.delete('/api/members/:id', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const targetUserId = Number(req.params.id);
     if (!targetUserId) {
@@ -1035,13 +1315,23 @@ app.delete('/api/members/:id', requireAuth, requireWorkspace, async (req, res) =
       userId: Number(removed.userId),
       email: removed.email
     });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'member.removed',
+      targetType: 'user',
+      targetId: removed.userId,
+      workspaceId: req.workspaceId,
+      metadata: {
+        email: removed.email
+      }
+    });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/members/:id/owner', requireAuth, requireWorkspace, async (req, res) => {
+app.post('/api/members/:id/owner', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const targetUserId = Number(req.params.id);
     if (!targetUserId) {
@@ -1059,13 +1349,23 @@ app.post('/api/members/:id/owner', requireAuth, requireWorkspace, async (req, re
       userId: Number(promoted.userId),
       email: promoted.email
     });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'member.promoted',
+      targetType: 'user',
+      targetId: promoted.userId,
+      workspaceId: req.workspaceId,
+      metadata: {
+        email: promoted.email
+      }
+    });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/lists', requireAuth, requireWorkspace, async (req, res) => {
+app.post('/api/lists', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     const type = String(req.body.type || 'task').trim().toLowerCase();
@@ -1081,13 +1381,24 @@ app.post('/api/lists', requireAuth, requireWorkspace, async (req, res) => {
 
     const list = await createList({ workspaceId: req.workspaceId, userId: req.auth.userId, name, type });
     broadcastToWorkspace(req.workspaceId, 'list.created', { listId: list.id });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'list.created',
+      targetType: 'list',
+      targetId: list.id,
+      workspaceId: req.workspaceId,
+      metadata: {
+        listName: list.name,
+        type: list.type
+      }
+    });
     res.status(201).json({ list });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.delete('/api/lists/:id', requireAuth, requireWorkspace, async (req, res) => {
+app.delete('/api/lists/:id', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const removed = await deleteList({ workspaceId: req.workspaceId, listId: Number(req.params.id) });
     if (!removed.ok) {
@@ -1101,13 +1412,20 @@ app.delete('/api/lists/:id', requireAuth, requireWorkspace, async (req, res) => 
     }
 
     broadcastToWorkspace(req.workspaceId, 'list.deleted', { listId: Number(req.params.id) });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'list.deleted',
+      targetType: 'list',
+      targetId: Number(req.params.id),
+      workspaceId: req.workspaceId
+    });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.post('/api/tasks', requireAuth, requireWorkspace, async (req, res) => {
+app.post('/api/tasks', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const listId = Number(req.body.listId);
     const title = String(req.body.title || '').trim();
@@ -1137,13 +1455,25 @@ app.post('/api/tasks', requireAuth, requireWorkspace, async (req, res) => {
     }
 
     broadcastToWorkspace(req.workspaceId, 'task.created', { taskId: task.id, listId });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'task.created',
+      targetType: 'task',
+      targetId: task.id,
+      workspaceId: req.workspaceId,
+      metadata: {
+        listId,
+        title: task.title,
+        priority: task.priority
+      }
+    });
     res.status(201).json({ task });
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.patch('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => {
+app.patch('/api/tasks/:id', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const hasOwn = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
     const titleProvided = hasOwn('title');
@@ -1203,13 +1533,30 @@ app.patch('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => {
     }
 
     broadcastToWorkspace(req.workspaceId, 'task.updated', { taskId: Number(req.params.id) });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: completedProvided
+        ? (completed ? 'task.completed' : 'task.reopened')
+        : 'task.updated',
+      targetType: 'task',
+      targetId: Number(req.params.id),
+      workspaceId: req.workspaceId,
+      metadata: {
+        completedProvided,
+        titleProvided,
+        descriptionProvided,
+        dueDateProvided,
+        priorityProvided,
+        quantityProvided: hasOwn('quantity')
+      }
+    });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
   }
 });
 
-app.delete('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => {
+app.delete('/api/tasks/:id', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
     const removed = await deleteTask({ workspaceId: req.workspaceId, taskId: Number(req.params.id) });
     if (!removed) {
@@ -1218,6 +1565,13 @@ app.delete('/api/tasks/:id', requireAuth, requireWorkspace, async (req, res) => 
     }
 
     broadcastToWorkspace(req.workspaceId, 'task.deleted', { taskId: Number(req.params.id) });
+    logAuditEvent({
+      actorUserId: req.auth.userId,
+      eventType: 'task.deleted',
+      targetType: 'task',
+      targetId: Number(req.params.id),
+      workspaceId: req.workspaceId
+    });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
@@ -1245,6 +1599,12 @@ server.on('upgrade', async (request, socket, head) => {
     }
 
     const auth = verifyAuthToken(token);
+    const currentUser = await getAuthContext(auth.userId);
+    if (!currentUser || currentUser.siteRole === 'SUPER_ADMIN') {
+      socket.destroy();
+      return;
+    }
+
     const membership = await ensureMembership(auth.userId, workspaceId);
     if (!membership) {
       socket.destroy();
@@ -1252,6 +1612,7 @@ server.on('upgrade', async (request, socket, head) => {
     }
 
     request.auth = auth;
+    request.currentUser = currentUser;
     request.workspaceId = workspaceId;
 
     wss.handleUpgrade(request, socket, head, (ws) => {
@@ -1267,6 +1628,33 @@ wss.on('connection', async (socket, request) => {
   attachSocketToWorkspace(request.workspaceId, socket);
   const snapshot = await getSnapshot({ userId: request.auth.userId, workspaceId: request.workspaceId });
   socket.send(JSON.stringify({ type: 'snapshot', data: snapshot }));
+});
+
+process.on('unhandledRejection', (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  console.error('Unhandled promise rejection', error);
+  logSystemEvent({
+    level: 'error',
+    source: 'process.unhandledRejection',
+    message: error.message,
+    stack: error.stack || ''
+  });
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception', error);
+  recordSystemErrorLog({
+    level: 'fatal',
+    source: 'process.uncaughtException',
+    message: error.message || 'Uncaught exception.',
+    stack: error.stack || ''
+  })
+    .catch((loggingError) => {
+      logBackgroundFailure('Failed to persist uncaught exception', loggingError);
+    })
+    .finally(() => {
+      process.exit(1);
+    });
 });
 
 initDb()

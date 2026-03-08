@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AccountProfileModal from './components/AccountProfileModal.vue';
+import AdminDashboard from './components/AdminDashboard.vue';
 import AuthPanel from './components/AuthPanel.vue';
 import GroceryPanel from './components/GroceryPanel.vue';
 import ListSidebar from './components/ListSidebar.vue';
@@ -83,6 +84,7 @@ const activeTasks = computed(() => {
 });
 const currentMembership = computed(() => memberships.value.find((item) => item.id === workspaceId.value) || null);
 const isAuthenticated = computed(() => Boolean(token.value));
+const isSuperAdmin = computed(() => currentUser.value?.siteRole === 'SUPER_ADMIN');
 const hasWorkspace = computed(() => Boolean(workspaceId.value));
 const memberCount = computed(() => members.value.length);
 const ownerCount = computed(() => members.value.filter((member) => member.role === 'owner').length);
@@ -319,6 +321,19 @@ function clearWorkspaceState() {
   activeListId.value = null;
 }
 
+function applyAdminSessionState(statusMessage = 'Admin dashboard ready.') {
+  disconnectSocket();
+  workspaceId.value = 0;
+  revokedWorkspaceId.value = 0;
+  memberships.value = [];
+  pendingInvites.value = [];
+  inviteDetails.value = null;
+  clearWorkspaceState();
+  noWorkspaceName.value = '';
+  localStorage.removeItem(WORKSPACE_KEY);
+  lastEvent.value = statusMessage;
+}
+
 async function applyWorkspaceMembershipUpdate({ workspaces = [], preferredWorkspaceId = 0, statusMessage = '' }) {
   disconnectSocket();
 
@@ -431,6 +446,13 @@ async function syncSessionAfterWorkspaceLoss(message) {
     currentUser.value = session.user;
     pendingInvites.value = normalizePendingInvites(session.pendingInvites || []);
     syncVisibleInvite();
+
+    if (session.user?.siteRole === 'SUPER_ADMIN') {
+      applyAdminSessionState(message || 'Admin dashboard ready.');
+      errorMessage.value = '';
+      return;
+    }
+
     await applyWorkspaceMembershipUpdate({
       workspaces: session.workspaces || [],
       preferredWorkspaceId: session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0,
@@ -950,6 +972,12 @@ async function restoreSession() {
     pendingInvites.value = normalizePendingInvites(session.pendingInvites || []);
     syncVisibleInvite();
 
+    if (session.user?.siteRole === 'SUPER_ADMIN') {
+      applyAdminSessionState();
+      errorMessage.value = '';
+      return;
+    }
+
     const preferredWorkspaceId = workspaceId.value && workspaceId.value !== revokedWorkspaceId.value ? workspaceId.value : 0;
     await applyWorkspaceMembershipUpdate({
       workspaces: session.workspaces || [],
@@ -1026,118 +1054,133 @@ onBeforeUnmount(() => {
     </template>
 
     <template v-else>
-      <section class="hero-bar panel">
-        <div>
-          <p class="eyebrow">{{ heroEyebrow }}</p>
-          <h1>{{ heroTitle }}</h1>
-        </div>
-        <div class="hero-meta">
-          <span class="hero-meta-status">{{ heroStatus }}</span>
-          <button
-            type="button"
-            class="account-summary-button"
-            :disabled="pending"
-            @click="openAccountModal"
-          >
-            <span class="account-summary-eyebrow">Account</span>
-            <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
-            <small>{{ currentUser?.email }}</small>
-          </button>
-        </div>
+      <section v-if="!currentUser" class="panel admin-loading-panel">
+        <p class="eyebrow">Loading session</p>
+        <h2>Restoring your account</h2>
+        <p class="subtle">Checking your role and workspace access.</p>
       </section>
 
-      <section v-if="inviteDetails" class="panel invite-accept-panel invite-pending-panel">
-        <div class="invite-accept-copy">
-          <p class="eyebrow">Pending invite</p>
-          <h2>Join {{ inviteDetails.workspaceName }}</h2>
-          <p class="subtle">Signed in as {{ currentUser?.email }}. Accept the invite to join this workspace.</p>
-          <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
-        </div>
-        <div class="invite-accept-actions">
-          <p class="subtle">Invitation ready</p>
-          <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
-        </div>
-      </section>
+      <AdminDashboard
+        v-else-if="isSuperAdmin"
+        :current-user="currentUser"
+        :requester="request"
+        @logout="clearSession"
+      />
 
-      <section v-else-if="!hasWorkspace" class="panel invite-accept-panel no-workspace-panel">
-        <div class="no-workspace-copy">
-          <p class="eyebrow">No workspace selected</p>
-          <h2>Your workspace access changed</h2>
-          <p class="subtle">You are still signed in, but you no longer have an active workspace selected.</p>
-          <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
-        </div>
-        <form class="no-workspace-form" @submit.prevent="createWorkspace(noWorkspaceName)">
-          <input v-model="noWorkspaceName" type="text" placeholder="Create a new workspace" :disabled="pending" />
-          <button class="ghost-button" type="submit" :disabled="pending || !noWorkspaceName.trim()">Create workspace</button>
-        </form>
-      </section>
+      <template v-else>
+        <section class="hero-bar panel">
+          <div>
+            <p class="eyebrow">{{ heroEyebrow }}</p>
+            <h1>{{ heroTitle }}</h1>
+          </div>
+          <div class="hero-meta">
+            <span class="hero-meta-status">{{ heroStatus }}</span>
+            <button
+              type="button"
+              class="account-summary-button"
+              :disabled="pending"
+              @click="openAccountModal"
+            >
+              <span class="account-summary-eyebrow">Account</span>
+              <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
+              <small>{{ currentUser?.email }}</small>
+            </button>
+          </div>
+        </section>
 
-      <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
+        <section v-if="inviteDetails" class="panel invite-accept-panel invite-pending-panel">
+          <div class="invite-accept-copy">
+            <p class="eyebrow">Pending invite</p>
+            <h2>Join {{ inviteDetails.workspaceName }}</h2>
+            <p class="subtle">Signed in as {{ currentUser?.email }}. Accept the invite to join this workspace.</p>
+            <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
+          </div>
+          <div class="invite-accept-actions">
+            <p class="subtle">Invitation ready</p>
+            <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
+          </div>
+        </section>
 
-      <section v-if="hasWorkspace" class="layout-grid three-up">
-        <WorkspaceSidebar
-          :current-user="currentUser"
-          :invites="invites"
-          :members="members"
-          :memberships="memberships"
-          :member-count="memberCount"
-          :owner-count="ownerCount"
-          :role="currentMembership?.role || 'member'"
-          :workspace="workspace"
-          :workspace-id="workspaceId || 0"
-          :pending="pending"
-          @cancel-invite="cancelInvite"
-          @copy-invite-link="copyInviteLink"
-          @create-workspace="createWorkspace"
-          @delete-workspace="deleteWorkspace"
-          @leave-workspace="leaveWorkspace"
-          @promote-member="promoteMember"
-          @rename-workspace="renameWorkspace"
-          @remove-member="removeMember"
-          @resend-invite="resendInvite"
-          @select-workspace="switchWorkspace"
-          @create-invite="createInvite"
-        />
+        <section v-else-if="!hasWorkspace" class="panel invite-accept-panel no-workspace-panel">
+          <div class="no-workspace-copy">
+            <p class="eyebrow">No workspace selected</p>
+            <h2>Your workspace access changed</h2>
+            <p class="subtle">You are still signed in, but you no longer have an active workspace selected.</p>
+            <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
+          </div>
+          <form class="no-workspace-form" @submit.prevent="createWorkspace(noWorkspaceName)">
+            <input v-model="noWorkspaceName" type="text" placeholder="Create a new workspace" :disabled="pending" />
+            <button class="ghost-button" type="submit" :disabled="pending || !noWorkspaceName.trim()">Create workspace</button>
+          </form>
+        </section>
 
-        <div ref="boardPanelRef" class="layout-anchor">
-          <TaskPanel
-            v-if="activeList?.type !== 'grocery'"
-            :active-list="activeList"
-            :tasks="activeTasks"
+        <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
+
+        <section v-if="hasWorkspace" class="layout-grid three-up">
+          <WorkspaceSidebar
+            :current-user="currentUser"
+            :invites="invites"
+            :members="members"
+            :memberships="memberships"
+            :member-count="memberCount"
+            :owner-count="ownerCount"
+            :role="currentMembership?.role || 'member'"
+            :workspace="workspace"
+            :workspace-id="workspaceId || 0"
             :pending="pending"
-            :socket-state="socketState"
-            @create-task="createTask"
-            @save-task="saveTask"
-            @show-lists="scrollToLists"
-            @toggle-task="toggleTask"
-            @delete-task="openDeleteTaskModal"
+            @cancel-invite="cancelInvite"
+            @copy-invite-link="copyInviteLink"
+            @create-workspace="createWorkspace"
+            @delete-workspace="deleteWorkspace"
+            @leave-workspace="leaveWorkspace"
+            @promote-member="promoteMember"
+            @rename-workspace="renameWorkspace"
+            @remove-member="removeMember"
+            @resend-invite="resendInvite"
+            @select-workspace="switchWorkspace"
+            @create-invite="createInvite"
           />
 
-          <GroceryPanel
-            v-else
-            :active-list="activeList"
-            :tasks="activeTasks"
-            :pending="pending"
-            :socket-state="socketState"
-            @create-task="createTask"
-            @save-task="saveTask"
-            @show-lists="scrollToLists"
-            @toggle-task="toggleTask"
-            @delete-task="openDeleteTaskModal"
-          />
-        </div>
+          <div ref="boardPanelRef" class="layout-anchor">
+            <TaskPanel
+              v-if="activeList?.type !== 'grocery'"
+              :active-list="activeList"
+              :tasks="activeTasks"
+              :pending="pending"
+              :socket-state="socketState"
+              @create-task="createTask"
+              @save-task="saveTask"
+              @show-lists="scrollToLists"
+              @toggle-task="toggleTask"
+              @delete-task="openDeleteTaskModal"
+            />
 
-        <div ref="listPanelRef" class="layout-anchor">
-          <ListSidebar
-            :current-list-id="activeListId || 0"
-            :lists="lists"
-            :pending="pending"
-            @create-list="createList"
-            @delete-list="deleteList"
-            @select-list="handleSelectList"
-          />
-        </div>
-      </section>
+            <GroceryPanel
+              v-else
+              :active-list="activeList"
+              :tasks="activeTasks"
+              :pending="pending"
+              :socket-state="socketState"
+              @create-task="createTask"
+              @save-task="saveTask"
+              @show-lists="scrollToLists"
+              @toggle-task="toggleTask"
+              @delete-task="openDeleteTaskModal"
+            />
+          </div>
+
+          <div ref="listPanelRef" class="layout-anchor">
+            <ListSidebar
+              :current-list-id="activeListId || 0"
+              :lists="lists"
+              :pending="pending"
+              @create-list="createList"
+              @delete-list="deleteList"
+              @select-list="handleSelectList"
+            />
+          </div>
+        </section>
+      </template>
     </template>
 
     <AccountProfileModal

@@ -8,6 +8,7 @@ const pool = new Pool({ connectionString });
 const INVITE_TTL_DAYS = 7;
 const PASSWORD_RESET_TTL_HOURS = 2;
 const LIST_TYPES = new Set(['task', 'grocery']);
+const SITE_ROLES = new Set(['USER', 'SUPER_ADMIN']);
 
 function fmt(value) {
   return value ? new Date(value).toLocaleDateString() : null;
@@ -55,6 +56,26 @@ function defaultWorkspaceNameFor(name) {
   return `${firstName}'s Workspace`;
 }
 
+function normalizeSiteRole(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase();
+
+  return SITE_ROLES.has(normalized) ? normalized : 'USER';
+}
+
+function isSuperAdminSiteRole(siteRole) {
+  return normalizeSiteRole(siteRole) === 'SUPER_ADMIN';
+}
+
+function getDefaultWorkspaceId(workspaces = []) {
+  return workspaces[0]?.id ?? null;
+}
+
+async function getSessionWorkspacesForSiteRole(userId, siteRole) {
+  return isSuperAdminSiteRole(siteRole) ? [] : getUserWorkspaces(userId);
+}
+
 async function createWorkspaceForUser(client, { userId, workspaceName }) {
   const workspaceSlug = `${slugify(workspaceName)}-${String(userId)}-${crypto.randomBytes(4).toString('hex')}`;
   const workspaceResult = await client.query(
@@ -85,7 +106,10 @@ async function getCurrentUserProfile(userId, db = pool) {
     `SELECT id,
             name,
             email,
+            site_role AS "siteRole",
             created_at AS "createdAt",
+            last_login_at AS "lastLoginAt",
+            last_active_at AS "lastActiveAt",
             (password_hash <> '') AS "hasPassword",
             (google_subject IS NOT NULL) AS "hasGoogle",
             (apple_subject IS NOT NULL) AS "hasApple"
@@ -103,9 +127,12 @@ export async function initDb() {
       id BIGSERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
+      site_role TEXT NOT NULL DEFAULT 'USER',
       password_hash TEXT NOT NULL DEFAULT '',
       google_subject TEXT UNIQUE,
       apple_subject TEXT UNIQUE,
+      last_login_at TIMESTAMPTZ,
+      last_active_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -156,14 +183,27 @@ export async function initDb() {
   `);
 
   await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS site_role TEXT NOT NULL DEFAULT 'USER';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_subject TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_subject TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMPTZ;
     ALTER TABLE users ALTER COLUMN password_hash SET DEFAULT '';
     ALTER TABLE lists ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'task';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS quantity TEXT NOT NULL DEFAULT '';
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date DATE;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium';
+    UPDATE users
+    SET site_role = 'USER'
+    WHERE site_role IS NULL
+       OR BTRIM(site_role) = '';
+    UPDATE users
+    SET site_role = UPPER(site_role)
+    WHERE site_role <> UPPER(site_role);
+    UPDATE users
+    SET site_role = 'USER'
+    WHERE site_role NOT IN ('USER', 'SUPER_ADMIN');
     UPDATE lists SET type = 'task' WHERE type IS NULL OR type NOT IN ('task', 'grocery');
     UPDATE tasks SET priority = 'medium' WHERE priority IS NULL OR priority NOT IN ('low', 'medium', 'high');
   `);
@@ -189,6 +229,31 @@ export async function initDb() {
       token_hash TEXT NOT NULL,
       used_at TIMESTAMPTZ,
       expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id BIGSERIAL PRIMARY KEY,
+      actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL,
+      target_type TEXT NOT NULL DEFAULT '',
+      target_id TEXT,
+      workspace_id BIGINT REFERENCES workspaces(id) ON DELETE SET NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS system_error_logs (
+      id BIGSERIAL PRIMARY KEY,
+      level TEXT NOT NULL DEFAULT 'error',
+      source TEXT NOT NULL,
+      message TEXT NOT NULL,
+      stack TEXT NOT NULL DEFAULT '',
+      status_code INTEGER,
+      request_method TEXT NOT NULL DEFAULT '',
+      request_path TEXT NOT NULL DEFAULT '',
+      user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -228,11 +293,329 @@ export async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_one_pending_email
     ON workspace_invites(workspace_id, email)
     WHERE accepted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_users_site_role ON users(site_role);
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject ON users(google_subject) WHERE google_subject IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_subject ON users(apple_subject) WHERE apple_subject IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_user_id ON audit_logs(actor_user_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_id ON audit_logs(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_system_error_logs_created_at ON system_error_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_system_error_logs_source ON system_error_logs(source);
+    CREATE INDEX IF NOT EXISTS idx_system_error_logs_user_id ON system_error_logs(user_id);
   `);
+}
+
+export async function getAuthContext(userId) {
+  const result = await pool.query(
+    `WITH touched AS (
+       UPDATE users
+       SET last_active_at = NOW()
+       WHERE id = $1
+         AND (
+           last_active_at IS NULL
+           OR last_active_at < NOW() - INTERVAL '15 minutes'
+         )
+       RETURNING id
+     )
+     SELECT id,
+            email,
+            site_role AS "siteRole"
+     FROM users
+     WHERE id = $1`,
+    [userId]
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function markUserLogin(userId, db = pool) {
+  await db.query(
+    `UPDATE users
+     SET last_login_at = NOW(),
+         last_active_at = NOW()
+     WHERE id = $1`,
+    [userId]
+  );
+}
+
+export async function recordAuditLog({
+  actorUserId = null,
+  eventType,
+  targetType = '',
+  targetId = null,
+  workspaceId = null,
+  metadata = {}
+}) {
+  if (!eventType) return;
+
+  await pool.query(
+    `INSERT INTO audit_logs (actor_user_id, event_type, target_type, target_id, workspace_id, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+    [
+      actorUserId || null,
+      String(eventType),
+      String(targetType || ''),
+      targetId === null || targetId === undefined ? null : String(targetId),
+      workspaceId || null,
+      JSON.stringify(metadata || {})
+    ]
+  );
+}
+
+export async function recordSystemErrorLog({
+  level = 'error',
+  source = 'server',
+  message,
+  stack = '',
+  statusCode = null,
+  requestMethod = '',
+  requestPath = '',
+  userId = null,
+  metadata = {}
+}) {
+  if (!message) return;
+
+  await pool.query(
+    `INSERT INTO system_error_logs (
+       level,
+       source,
+       message,
+       stack,
+       status_code,
+       request_method,
+       request_path,
+       user_id,
+       metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+    [
+      String(level || 'error'),
+      String(source || 'server'),
+      String(message),
+      String(stack || ''),
+      statusCode || null,
+      String(requestMethod || ''),
+      String(requestPath || ''),
+      userId || null,
+      JSON.stringify(metadata || {})
+    ]
+  );
+}
+
+export async function getAdminDashboardSnapshot() {
+  const [
+    overviewResult,
+    providerMixResult,
+    growthResult,
+    usersResult,
+    workspacesResult,
+    activityResult,
+    errorsResult
+  ] = await Promise.all([
+    pool.query(
+      `SELECT
+         (SELECT COUNT(*)::integer FROM users) AS "totalUsers",
+         (SELECT COUNT(*)::integer FROM users WHERE site_role = 'SUPER_ADMIN') AS "totalSuperAdmins",
+         (SELECT COUNT(*)::integer FROM workspaces) AS "totalWorkspaces",
+         (SELECT COUNT(*)::integer FROM lists) AS "totalLists",
+         (SELECT COUNT(*)::integer FROM tasks) AS "totalTasks",
+         (SELECT COUNT(*)::integer FROM tasks WHERE completed_at IS NOT NULL) AS "completedTasks",
+         (SELECT COUNT(*)::integer FROM tasks WHERE completed_at IS NULL) AS "openTasks",
+         (SELECT COUNT(*)::integer
+          FROM workspace_invites
+          WHERE accepted_at IS NULL
+            AND expires_at > NOW()) AS "pendingInvites",
+         (SELECT COUNT(*)::integer FROM users WHERE created_at >= NOW() - INTERVAL '7 days') AS "newUsers7d",
+         (SELECT COUNT(*)::integer FROM workspaces WHERE created_at >= NOW() - INTERVAL '7 days') AS "newWorkspaces7d",
+         (SELECT COUNT(*)::integer FROM users WHERE last_login_at >= NOW() - INTERVAL '7 days') AS "logins7d",
+         (SELECT COUNT(*)::integer FROM users WHERE last_active_at >= NOW() - INTERVAL '1 day') AS "activeUsers24h",
+         (SELECT COUNT(*)::integer FROM users WHERE last_active_at >= NOW() - INTERVAL '7 days') AS "activeUsers7d",
+         (SELECT COUNT(*)::integer FROM system_error_logs WHERE created_at >= NOW() - INTERVAL '1 day') AS "errors24h"`
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE password_hash <> '')::integer AS "passwordUsers",
+         COUNT(*) FILTER (WHERE google_subject IS NOT NULL)::integer AS "googleUsers",
+         COUNT(*) FILTER (WHERE apple_subject IS NOT NULL)::integer AS "appleUsers",
+         COUNT(*) FILTER (
+           WHERE password_hash <> ''
+             AND google_subject IS NULL
+             AND apple_subject IS NULL
+         )::integer AS "passwordOnlyUsers",
+         COUNT(*) FILTER (
+           WHERE google_subject IS NOT NULL
+             AND apple_subject IS NULL
+             AND password_hash = ''
+         )::integer AS "googleOnlyUsers",
+         COUNT(*) FILTER (
+           WHERE apple_subject IS NOT NULL
+             AND google_subject IS NULL
+             AND password_hash = ''
+         )::integer AS "appleOnlyUsers",
+         COUNT(*) FILTER (
+           WHERE password_hash <> ''
+             AND google_subject IS NOT NULL
+         )::integer AS "passwordAndGoogleUsers",
+         COUNT(*) FILTER (
+           WHERE password_hash <> ''
+             AND apple_subject IS NOT NULL
+         )::integer AS "passwordAndAppleUsers"
+       FROM users`
+    ),
+    pool.query(
+      `SELECT TO_CHAR(day_series.day, 'YYYY-MM-DD') AS day,
+              COALESCE(signups.new_users, 0)::integer AS "newUsers",
+              COALESCE(workspaces.new_workspaces, 0)::integer AS "newWorkspaces"
+       FROM generate_series(
+         CURRENT_DATE - INTERVAL '6 days',
+         CURRENT_DATE,
+         INTERVAL '1 day'
+       ) AS day_series(day)
+       LEFT JOIN (
+         SELECT DATE(created_at) AS day,
+                COUNT(*) AS new_users
+         FROM users
+         WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
+         GROUP BY DATE(created_at)
+       ) signups ON signups.day = DATE(day_series.day)
+       LEFT JOIN (
+         SELECT DATE(created_at) AS day,
+                COUNT(*) AS new_workspaces
+         FROM workspaces
+         WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
+         GROUP BY DATE(created_at)
+       ) workspaces ON workspaces.day = DATE(day_series.day)
+       ORDER BY day_series.day ASC`
+    ),
+    pool.query(
+      `SELECT u.id,
+              u.name,
+              u.email,
+              u.site_role AS "siteRole",
+              u.created_at AS "createdAt",
+              u.last_login_at AS "lastLoginAt",
+              u.last_active_at AS "lastActiveAt",
+              (u.password_hash <> '') AS "hasPassword",
+              (u.google_subject IS NOT NULL) AS "hasGoogle",
+              (u.apple_subject IS NOT NULL) AS "hasApple",
+              COALESCE(workspace_counts.workspace_count, 0)::integer AS "workspaceCount",
+              COALESCE(task_counts.task_count, 0)::integer AS "taskCount",
+              COALESCE(task_counts.completed_task_count, 0)::integer AS "completedTaskCount",
+              COALESCE(invite_counts.pending_invite_count, 0)::integer AS "pendingInviteCount"
+       FROM users u
+       LEFT JOIN (
+         SELECT user_id,
+                COUNT(*) AS workspace_count
+         FROM workspace_members
+         GROUP BY user_id
+       ) workspace_counts ON workspace_counts.user_id = u.id
+       LEFT JOIN (
+         SELECT created_by_user_id AS user_id,
+                COUNT(*) AS task_count,
+                COUNT(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_task_count
+         FROM tasks
+         WHERE created_by_user_id IS NOT NULL
+         GROUP BY created_by_user_id
+       ) task_counts ON task_counts.user_id = u.id
+       LEFT JOIN (
+         SELECT invitee.id AS user_id,
+                COUNT(*) AS pending_invite_count
+         FROM workspace_invites wi
+         JOIN users invitee ON invitee.email = wi.email
+         WHERE wi.accepted_at IS NULL
+           AND wi.expires_at > NOW()
+         GROUP BY invitee.id
+       ) invite_counts ON invite_counts.user_id = u.id
+       ORDER BY
+         CASE WHEN u.site_role = 'SUPER_ADMIN' THEN 0 ELSE 1 END,
+         u.created_at DESC,
+         u.id DESC`
+    ),
+    pool.query(
+      `SELECT w.id,
+              w.name,
+              w.slug,
+              w.created_at AS "createdAt",
+              creator.name AS "createdByName",
+              creator.email AS "createdByEmail",
+              COALESCE(member_counts.member_count, 0)::integer AS "memberCount",
+              COALESCE(list_counts.list_count, 0)::integer AS "listCount",
+              COALESCE(task_counts.task_count, 0)::integer AS "taskCount",
+              COALESCE(task_counts.completed_task_count, 0)::integer AS "completedTaskCount"
+       FROM workspaces w
+       LEFT JOIN users creator ON creator.id = w.created_by_user_id
+       LEFT JOIN (
+         SELECT workspace_id,
+                COUNT(*) AS member_count
+         FROM workspace_members
+         GROUP BY workspace_id
+       ) member_counts ON member_counts.workspace_id = w.id
+       LEFT JOIN (
+         SELECT workspace_id,
+                COUNT(*) AS list_count
+         FROM lists
+         GROUP BY workspace_id
+       ) list_counts ON list_counts.workspace_id = w.id
+       LEFT JOIN (
+         SELECT workspace_id,
+                COUNT(*) AS task_count,
+                COUNT(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_task_count
+         FROM tasks
+         GROUP BY workspace_id
+       ) task_counts ON task_counts.workspace_id = w.id
+       ORDER BY
+         COALESCE(task_counts.task_count, 0) DESC,
+         COALESCE(member_counts.member_count, 0) DESC,
+         w.created_at DESC
+       LIMIT 12`
+    ),
+    pool.query(
+      `SELECT al.id,
+              al.event_type AS "eventType",
+              al.target_type AS "targetType",
+              al.target_id AS "targetId",
+              al.workspace_id AS "workspaceId",
+              al.metadata,
+              al.created_at AS "createdAt",
+              actor.id AS "actorUserId",
+              actor.name AS "actorName",
+              actor.email AS "actorEmail"
+       FROM audit_logs al
+       LEFT JOIN users actor ON actor.id = al.actor_user_id
+       ORDER BY al.created_at DESC, al.id DESC
+       LIMIT 30`
+    ),
+    pool.query(
+      `SELECT sel.id,
+              sel.level,
+              sel.source,
+              sel.message,
+              sel.stack,
+              sel.status_code AS "statusCode",
+              sel.request_method AS "requestMethod",
+              sel.request_path AS "requestPath",
+              sel.metadata,
+              sel.created_at AS "createdAt",
+              u.id AS "userId",
+              u.email AS "userEmail"
+       FROM system_error_logs sel
+       LEFT JOIN users u ON u.id = sel.user_id
+       ORDER BY sel.created_at DESC, sel.id DESC
+       LIMIT 40`
+    )
+  ]);
+
+  return {
+    overview: overviewResult.rows[0] || {},
+    providers: providerMixResult.rows[0] || {},
+    growth: growthResult.rows,
+    users: usersResult.rows,
+    workspaces: workspacesResult.rows,
+    recentActivity: activityResult.rows,
+    errorLogs: errorsResult.rows
+  };
 }
 
 function hashInviteToken(token) {
@@ -277,7 +660,7 @@ export async function registerUser({ name, email, password, workspaceName, invit
     const userResult = await client.query(
       `INSERT INTO users (name, email, password_hash)
        VALUES ($1, $2, $3)
-       RETURNING id, name, email, created_at AS "createdAt"`,
+       RETURNING id, name, email, site_role AS "siteRole", created_at AS "createdAt"`,
       [name.trim(), normalizedEmail, passwordHash]
     );
     const user = userResult.rows[0];
@@ -293,7 +676,8 @@ export async function registerUser({ name, email, password, workspaceName, invit
     }
 
     await client.query('COMMIT');
-    return { user, workspace, workspaces: await getUserWorkspaces(user.id) };
+    const workspaces = await getSessionWorkspacesForSiteRole(user.id, user.siteRole);
+    return { user, workspace, workspaces, defaultWorkspaceId: getDefaultWorkspaceId(workspaces) };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -307,6 +691,7 @@ export async function authenticateUser({ email, password }) {
     `SELECT id,
             name,
             email,
+            site_role AS "siteRole",
             password_hash AS "passwordHash",
             google_subject AS "googleSubject",
             apple_subject AS "appleSubject"
@@ -339,15 +724,16 @@ export async function authenticateUser({ email, password }) {
     throw error;
   }
 
-  const workspaces = await getUserWorkspaces(user.id);
+  const workspaces = await getSessionWorkspacesForSiteRole(user.id, user.siteRole);
   return {
     user: {
       id: user.id,
       name: user.name,
-      email: user.email
+      email: user.email,
+      siteRole: user.siteRole
     },
     workspaces,
-    defaultWorkspaceId: workspaces[0]?.id ?? null
+    defaultWorkspaceId: getDefaultWorkspaceId(workspaces)
   };
 }
 
@@ -441,7 +827,8 @@ export async function resetPasswordWithToken({ resetToken, password }) {
               prt.used_at AS "usedAt",
               prt.expires_at AS "expiresAt",
               u.name,
-              u.email
+              u.email,
+              u.site_role AS "siteRole"
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
        WHERE prt.token_hash = $1
@@ -475,15 +862,16 @@ export async function resetPasswordWithToken({ resetToken, password }) {
 
     await client.query('COMMIT');
 
-    const workspaces = await getUserWorkspaces(resetRecord.userId);
+    const workspaces = await getSessionWorkspacesForSiteRole(resetRecord.userId, resetRecord.siteRole);
     return {
       user: {
         id: resetRecord.userId,
         name: resetRecord.name,
-        email: resetRecord.email
+        email: resetRecord.email,
+        siteRole: resetRecord.siteRole
       },
       workspaces,
-      defaultWorkspaceId: workspaces[0]?.id ?? null
+      defaultWorkspaceId: getDefaultWorkspaceId(workspaces)
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -510,7 +898,7 @@ export async function authenticateWithGoogle({ email, googleSubject, name, invit
 
     let user = null;
     const existingByGoogle = await client.query(
-      `SELECT id, name, email, google_subject AS "googleSubject"
+      `SELECT id, name, email, site_role AS "siteRole", google_subject AS "googleSubject"
        FROM users
        WHERE google_subject = $1`,
       [googleSubject]
@@ -519,7 +907,7 @@ export async function authenticateWithGoogle({ email, googleSubject, name, invit
 
     if (!user) {
       const existingByEmail = await client.query(
-        `SELECT id, name, email, google_subject AS "googleSubject"
+        `SELECT id, name, email, site_role AS "siteRole", google_subject AS "googleSubject"
          FROM users
          WHERE email = $1`,
         [normalizedEmail]
@@ -541,7 +929,7 @@ export async function authenticateWithGoogle({ email, googleSubject, name, invit
          SET google_subject = COALESCE(google_subject, $2),
              name = CASE WHEN BTRIM(name) = '' THEN $3 ELSE name END
          WHERE id = $1
-         RETURNING id, name, email, created_at AS "createdAt"`,
+         RETURNING id, name, email, site_role AS "siteRole", created_at AS "createdAt"`,
         [user.id, googleSubject, name.trim()]
       );
       user = updateResult.rows[0];
@@ -549,7 +937,7 @@ export async function authenticateWithGoogle({ email, googleSubject, name, invit
       const createdUser = await client.query(
         `INSERT INTO users (name, email, password_hash, google_subject)
          VALUES ($1, $2, '', $3)
-         RETURNING id, name, email, created_at AS "createdAt"`,
+         RETURNING id, name, email, site_role AS "siteRole", created_at AS "createdAt"`,
         [name.trim(), normalizedEmail, googleSubject]
       );
       user = createdUser.rows[0];
@@ -564,12 +952,12 @@ export async function authenticateWithGoogle({ email, googleSubject, name, invit
 
     await client.query('COMMIT');
 
-    const workspaces = await getUserWorkspaces(user.id);
+    const workspaces = await getSessionWorkspacesForSiteRole(user.id, user.siteRole);
     return {
       user,
       workspace,
       workspaces,
-      defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null
+      defaultWorkspaceId: workspace?.id || getDefaultWorkspaceId(workspaces)
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -596,7 +984,7 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
 
     let user = null;
     const existingByApple = await client.query(
-      `SELECT id, name, email, apple_subject AS "appleSubject", google_subject AS "googleSubject"
+      `SELECT id, name, email, site_role AS "siteRole", apple_subject AS "appleSubject", google_subject AS "googleSubject"
        FROM users
        WHERE apple_subject = $1`,
       [appleSubject]
@@ -605,7 +993,7 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
 
     if (!user) {
       const existingByEmail = await client.query(
-        `SELECT id, name, email, apple_subject AS "appleSubject", google_subject AS "googleSubject"
+        `SELECT id, name, email, site_role AS "siteRole", apple_subject AS "appleSubject", google_subject AS "googleSubject"
          FROM users
          WHERE email = $1`,
         [normalizedEmail]
@@ -628,7 +1016,7 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
          SET apple_subject = COALESCE(apple_subject, $2),
              name = CASE WHEN BTRIM(name) = '' AND $3 <> '' THEN $3 ELSE name END
          WHERE id = $1
-         RETURNING id, name, email, created_at AS "createdAt"`,
+         RETURNING id, name, email, site_role AS "siteRole", created_at AS "createdAt"`,
         [user.id, appleSubject, nextName]
       );
       user = updateResult.rows[0];
@@ -637,7 +1025,7 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
       const createdUser = await client.query(
         `INSERT INTO users (name, email, password_hash, apple_subject)
          VALUES ($1, $2, '', $3)
-         RETURNING id, name, email, created_at AS "createdAt"`,
+         RETURNING id, name, email, site_role AS "siteRole", created_at AS "createdAt"`,
         [nextName, normalizedEmail, appleSubject]
       );
       user = createdUser.rows[0];
@@ -652,12 +1040,12 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
 
     await client.query('COMMIT');
 
-    const workspaces = await getUserWorkspaces(user.id);
+    const workspaces = await getSessionWorkspacesForSiteRole(user.id, user.siteRole);
     return {
       user,
       workspace,
       workspaces,
-      defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null
+      defaultWorkspaceId: workspace?.id || getDefaultWorkspaceId(workspaces)
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -668,11 +1056,7 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
 }
 
 export async function getAuthSession(userId) {
-  const [user, workspaces, pendingInvites] = await Promise.all([
-    getCurrentUserProfile(userId),
-    getUserWorkspaces(userId),
-    getPendingInvitesForUser(userId)
-  ]);
+  const user = await getCurrentUserProfile(userId);
 
   if (!user) {
     const error = new Error('User not found.');
@@ -680,11 +1064,25 @@ export async function getAuthSession(userId) {
     throw error;
   }
 
+  if (isSuperAdminSiteRole(user.siteRole)) {
+    return {
+      user,
+      workspaces: [],
+      pendingInvites: [],
+      defaultWorkspaceId: null
+    };
+  }
+
+  const [workspaces, pendingInvites] = await Promise.all([
+    getUserWorkspaces(userId),
+    getPendingInvitesForUser(userId)
+  ]);
+
   return {
     user,
     workspaces,
     pendingInvites,
-    defaultWorkspaceId: workspaces[0]?.id ?? null
+    defaultWorkspaceId: getDefaultWorkspaceId(workspaces)
   };
 }
 
