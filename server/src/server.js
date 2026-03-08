@@ -29,6 +29,7 @@ import {
   getSnapshot,
   initDb,
   leaveWorkspace,
+  promoteWorkspaceMemberToOwner,
   removeWorkspaceMember,
   registerUser,
   resendWorkspaceInvite,
@@ -870,6 +871,30 @@ app.delete('/api/members/:id', requireAuth, requireWorkspace, async (req, res) =
     broadcastToWorkspace(req.workspaceId, 'member.removed', {
       userId: Number(removed.userId),
       email: removed.email
+    });
+    res.status(204).end();
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/members/:id/owner', requireAuth, requireWorkspace, async (req, res) => {
+  try {
+    const targetUserId = Number(req.params.id);
+    if (!targetUserId) {
+      res.status(400).json({ error: 'Member id is required.' });
+      return;
+    }
+
+    const promoted = await promoteWorkspaceMemberToOwner({
+      workspaceId: req.workspaceId,
+      actorUserId: req.auth.userId,
+      targetUserId
+    });
+
+    broadcastToWorkspace(req.workspaceId, 'member.promoted', {
+      userId: Number(promoted.userId),
+      email: promoted.email
     });
     res.status(204).end();
   } catch (error) {

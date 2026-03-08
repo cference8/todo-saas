@@ -334,10 +334,13 @@ textarea {
 .member-actions {
   width: 100%;
   display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
   justify-content: flex-start;
   padding-top: 0.15rem;
 }
 
+.member-actions .ghost-button,
 .member-actions .ghost-danger {
   min-height: 40px;
   padding: 0 0.95rem;

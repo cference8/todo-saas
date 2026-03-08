@@ -26,7 +26,15 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['create-invite', 'copy-invite-link', 'resend-invite', 'cancel-invite', 'remove-member', 'logout']);
+const emit = defineEmits([
+  'create-invite',
+  'copy-invite-link',
+  'resend-invite',
+  'cancel-invite',
+  'remove-member',
+  'promote-member',
+  'logout'
+]);
 const inviteEmail = ref('');
 const lastInviteUrl = ref('');
 const lastInviteNotice = ref('');
@@ -95,6 +103,25 @@ function canRemoveMember(member) {
   return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
 }
 
+function canPromoteMember(member) {
+  return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
+}
+
+function canManageMember(member) {
+  return canRemoveMember(member) || canPromoteMember(member);
+}
+
+function promoteMember(member) {
+  const confirmed = window.confirm(`Promote ${member.name} to owner?`);
+  if (!confirmed) return;
+
+  emit('promote-member', member, () => {
+    lastInviteNotice.value = `${member.name} is now an owner.`;
+    lastInviteNoticeTone.value = 'success';
+    activeMemberId.value = null;
+  });
+}
+
 function removeMember(member) {
   const confirmed = window.confirm(`Remove ${member.name} from this workspace?`);
   if (!confirmed) return;
@@ -131,7 +158,7 @@ function formatEmailPreview(email) {
         :class="{ active: activeMemberId === member.id }"
       >
         <button
-          v-if="canRemoveMember(member)"
+          v-if="canManageMember(member)"
           type="button"
           class="member-summary"
           :disabled="pending"
@@ -146,7 +173,24 @@ function formatEmailPreview(email) {
         </span>
         <small class="member-role">{{ member.role }}</small>
         <div v-if="activeMemberId === member.id" class="member-actions">
-          <button type="button" class="ghost-danger" :disabled="pending" @click="removeMember(member)">Remove</button>
+          <button
+            v-if="canPromoteMember(member)"
+            type="button"
+            class="ghost-button muted-button"
+            :disabled="pending"
+            @click="promoteMember(member)"
+          >
+            Make owner
+          </button>
+          <button
+            v-if="canRemoveMember(member)"
+            type="button"
+            class="ghost-danger"
+            :disabled="pending"
+            @click="removeMember(member)"
+          >
+            Remove
+          </button>
         </div>
       </div>
     </div>

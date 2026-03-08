@@ -60,6 +60,8 @@ const activeTasks = computed(() => {
 const currentMembership = computed(() => memberships.value.find((item) => item.id === workspaceId.value) || null);
 const isAuthenticated = computed(() => Boolean(token.value));
 const hasWorkspace = computed(() => Boolean(workspaceId.value));
+const memberCount = computed(() => members.value.length);
+const ownerCount = computed(() => members.value.filter((member) => member.role === 'owner').length);
 
 async function request(path, options = {}) {
   const headers = {
@@ -439,6 +441,19 @@ async function deleteWorkspace() {
   });
 }
 
+async function promoteMember(member, onCompleted) {
+  await withPending(async () => {
+    await request(`/api/members/${member.id}/owner`, {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspaceId.value })
+    });
+    if (typeof onCompleted === 'function') {
+      onCompleted();
+    }
+    await loadBootstrap();
+  });
+}
+
 async function createList(payload) {
   await withPending(async () => {
     const created = await request('/api/lists', {
@@ -758,6 +773,8 @@ onBeforeUnmount(() => {
           :current-list-id="activeListId || 0"
           :lists="lists"
           :memberships="memberships"
+          :member-count="memberCount"
+          :owner-count="ownerCount"
           :role="currentMembership?.role || 'member'"
           :workspace="workspace"
           :workspace-id="workspaceId || 0"
@@ -805,6 +822,7 @@ onBeforeUnmount(() => {
           @copy-invite-link="copyInviteLink"
           @create-invite="createInvite"
           @logout="clearSession"
+          @promote-member="promoteMember"
           @remove-member="removeMember"
           @resend-invite="resendInvite"
         />

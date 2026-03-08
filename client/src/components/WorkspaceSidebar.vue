@@ -14,6 +14,14 @@ const props = defineProps({
     type: Array,
     required: true
   },
+  memberCount: {
+    type: Number,
+    default: 0
+  },
+  ownerCount: {
+    type: Number,
+    default: 0
+  },
   role: {
     type: String,
     default: 'member'
@@ -51,8 +59,9 @@ const workspaceForm = reactive({
 });
 const deleteTarget = ref(null);
 const modalError = ref('');
-const canLeaveWorkspace = computed(() => props.role === 'member');
-const canDeleteWorkspace = computed(() => props.role === 'owner');
+const canDeleteWorkspace = computed(() => props.role === 'owner' && props.memberCount <= 1);
+const canLeaveWorkspace = computed(() => props.role === 'member' || (props.role === 'owner' && props.memberCount > 1));
+const ownerMustTransfer = computed(() => props.role === 'owner' && props.memberCount > 1 && props.ownerCount < 2);
 
 function handleCreateList() {
   modalMode.value = 'create';
@@ -238,12 +247,19 @@ function confirmDeleteWorkspace() {
         <div>
           <p class="eyebrow">Leave workspace</p>
           <h2>Leave {{ workspace?.name || 'this workspace' }}?</h2>
-          <p class="subtle">You will lose access immediately. You can only rejoin if an owner invites you again.</p>
+          <p v-if="ownerMustTransfer" class="subtle">
+            Promote another member to owner in the session panel before leaving. Shared workspaces must keep an owner.
+          </p>
+          <p v-else class="subtle">
+            You will lose access immediately. You can only rejoin if an owner invites you again.
+          </p>
         </div>
 
         <div class="modal-actions">
           <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
-          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmLeaveWorkspace">Leave workspace</button>
+          <button class="ghost-danger" type="button" :disabled="pending || ownerMustTransfer" @click="confirmLeaveWorkspace">
+            Leave workspace
+          </button>
         </div>
       </template>
 

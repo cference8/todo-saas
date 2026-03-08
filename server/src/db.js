@@ -570,6 +570,68 @@ export async function removeWorkspaceMember({ workspaceId, actorUserId, targetUs
   }
 }
 
+export async function promoteWorkspaceMemberToOwner({ workspaceId, actorUserId, targetUserId }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const actorMembership = await client.query(
+      `SELECT role
+       FROM workspace_members
+       WHERE workspace_id = $1 AND user_id = $2`,
+      [workspaceId, actorUserId]
+    );
+    if (!actorMembership.rowCount || actorMembership.rows[0].role !== 'owner') {
+      const error = new Error('Only workspace owners can appoint another owner.');
+      error.status = 403;
+      throw error;
+    }
+
+    const targetMembership = await client.query(
+      `SELECT wm.user_id AS "userId",
+              wm.role,
+              u.email,
+              u.name
+       FROM workspace_members wm
+       JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = $1 AND wm.user_id = $2
+       FOR UPDATE`,
+      [workspaceId, targetUserId]
+    );
+    if (!targetMembership.rowCount) {
+      const error = new Error('Member not found in this workspace.');
+      error.status = 404;
+      throw error;
+    }
+
+    const target = targetMembership.rows[0];
+    if (target.role === 'owner') {
+      const error = new Error('That member is already an owner.');
+      error.status = 409;
+      throw error;
+    }
+
+    await client.query(
+      `UPDATE workspace_members
+       SET role = 'owner'
+       WHERE workspace_id = $1 AND user_id = $2`,
+      [workspaceId, targetUserId]
+    );
+
+    await client.query('COMMIT');
+    return {
+      ...target,
+      role: 'owner'
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function leaveWorkspace({ workspaceId, userId }) {
   const client = await pool.connect();
 
@@ -595,9 +657,18 @@ export async function leaveWorkspace({ workspaceId, userId }) {
 
     const membership = membershipResult.rows[0];
     if (membership.role === 'owner') {
-      const error = new Error('Owners cannot leave a workspace they own. Delete it instead.');
-      error.status = 400;
-      throw error;
+      const ownerCountResult = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM workspace_members
+         WHERE workspace_id = $1 AND role = 'owner'`,
+        [workspaceId]
+      );
+
+      if (ownerCountResult.rows[0].count <= 1) {
+        const error = new Error('Appoint another owner before leaving this workspace.');
+        error.status = 400;
+        throw error;
+      }
     }
 
     await client.query(
@@ -657,6 +728,12 @@ export async function deleteWorkspace({ workspaceId, actorUserId }) {
        ORDER BY wm.joined_at ASC`,
       [workspaceId]
     );
+
+    if (membersResult.rowCount > 1) {
+      const error = new Error('Shared workspaces cannot be deleted. Appoint another owner and leave the workspace instead.');
+      error.status = 400;
+      throw error;
+    }
 
     const deleteResult = await client.query(
       `DELETE FROM workspaces
