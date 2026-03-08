@@ -585,7 +585,7 @@ export async function getAdminDashboardSnapshot() {
        FROM audit_logs al
        LEFT JOIN users actor ON actor.id = al.actor_user_id
        ORDER BY al.created_at DESC, al.id DESC
-       LIMIT 30`
+       LIMIT 100`
     ),
     pool.query(
       `SELECT sel.id,
@@ -603,7 +603,7 @@ export async function getAdminDashboardSnapshot() {
        FROM system_error_logs sel
        LEFT JOIN users u ON u.id = sel.user_id
        ORDER BY sel.created_at DESC, sel.id DESC
-       LIMIT 40`
+       LIMIT 100`
     )
   ]);
 

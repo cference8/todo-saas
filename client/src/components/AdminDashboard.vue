@@ -19,6 +19,11 @@ const loading = ref(true);
 const refreshing = ref(false);
 const errorMessage = ref('');
 const lastLoadedAt = ref('');
+const activityFilter = ref('all');
+const activitySearch = ref('');
+const errorLevelFilter = ref('all');
+const errorSourceFilter = ref('all');
+const errorSearch = ref('');
 
 const overview = computed(() => dashboard.value?.overview || {});
 const providers = computed(() => dashboard.value?.providers || {});
@@ -86,6 +91,90 @@ const growthMax = computed(() => {
   }, 0);
 
   return maxValue || 1;
+});
+
+const activityFilterOptions = computed(() => {
+  const buckets = [
+    { value: 'all', label: 'All activity' },
+    { value: 'auth', label: 'Auth' },
+    { value: 'profile', label: 'Profiles' },
+    { value: 'workspace', label: 'Workspaces' },
+    { value: 'invite', label: 'Invites' },
+    { value: 'member', label: 'Members' },
+    { value: 'list', label: 'Lists' },
+    { value: 'task', label: 'Tasks' },
+    { value: 'other', label: 'Other' }
+  ];
+
+  return buckets.map((bucket) => ({
+    ...bucket,
+    count: bucket.value === 'all'
+      ? recentActivity.value.length
+      : recentActivity.value.filter((entry) => activityCategory(entry) === bucket.value).length
+  }));
+});
+
+const errorLevelOptions = computed(() => {
+  const levels = Array.from(new Set(errorLogs.value.map((log) => log.level).filter(Boolean)));
+  return ['all', ...levels];
+});
+
+const errorSourceOptions = computed(() => {
+  const sources = Array.from(new Set(errorLogs.value.map((log) => log.source).filter(Boolean)));
+  return ['all', ...sources];
+});
+
+const filteredActivity = computed(() => {
+  const searchTerm = activitySearch.value.trim().toLowerCase();
+
+  return recentActivity.value.filter((entry) => {
+    if (activityFilter.value !== 'all' && activityCategory(entry) !== activityFilter.value) {
+      return false;
+    }
+
+    if (!searchTerm) return true;
+
+    const haystack = [
+      activityTitle(entry),
+      activityContext(entry),
+      entry.eventType,
+      JSON.stringify(entry.metadata || {})
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    return haystack.includes(searchTerm);
+  });
+});
+
+const filteredErrorLogs = computed(() => {
+  const searchTerm = errorSearch.value.trim().toLowerCase();
+
+  return errorLogs.value.filter((log) => {
+    if (errorLevelFilter.value !== 'all' && log.level !== errorLevelFilter.value) {
+      return false;
+    }
+
+    if (errorSourceFilter.value !== 'all' && log.source !== errorSourceFilter.value) {
+      return false;
+    }
+
+    if (!searchTerm) return true;
+
+    const haystack = [
+      log.message,
+      log.source,
+      log.requestMethod,
+      log.requestPath,
+      log.userEmail,
+      log.stack,
+      JSON.stringify(log.metadata || {})
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    return haystack.includes(searchTerm);
+  });
 });
 
 function formatNumber(value) {
@@ -156,6 +245,19 @@ function humanizeEventType(eventType) {
     .replaceAll('.', ' ')
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function activityCategory(entry) {
+  const eventType = String(entry?.eventType || '');
+
+  if (eventType.startsWith('auth.')) return 'auth';
+  if (eventType.startsWith('profile.')) return 'profile';
+  if (eventType.startsWith('workspace.')) return 'workspace';
+  if (eventType.startsWith('invite.')) return 'invite';
+  if (eventType.startsWith('member.')) return 'member';
+  if (eventType.startsWith('list.')) return 'list';
+  if (eventType.startsWith('task.')) return 'task';
+  return 'other';
 }
 
 function activityTitle(entry) {
@@ -229,8 +331,42 @@ function activityContext(entry) {
   if (metadata.email && metadata.email !== entry.actorEmail) {
     details.push(metadata.email);
   }
+  if (metadata.ipAddress) {
+    details.push(metadata.ipAddress);
+  }
+  if (metadata.location?.label) {
+    details.push(metadata.location.label);
+  }
 
   return details.join(' • ');
+}
+
+function errorContext(log) {
+  const details = [];
+  const metadata = log?.metadata || {};
+
+  if (log?.statusCode) details.push(`HTTP ${log.statusCode}`);
+  if (log?.requestMethod || log?.requestPath) {
+    details.push([log.requestMethod, log.requestPath].filter(Boolean).join(' '));
+  }
+  if (log?.userEmail) details.push(log.userEmail);
+  if (metadata.ipAddress) details.push(metadata.ipAddress);
+  if (metadata.location?.label) details.push(metadata.location.label);
+
+  return details.join(' • ');
+}
+
+function formatActivityDetails(entry) {
+  const payload = {
+    eventType: entry.eventType,
+    targetType: entry.targetType,
+    targetId: entry.targetId,
+    workspaceId: entry.workspaceId,
+    actorUserId: entry.actorUserId,
+    metadata: entry.metadata || {}
+  };
+
+  return JSON.stringify(payload, null, 2);
 }
 
 function hasErrorDetails(log) {
@@ -353,24 +489,51 @@ onMounted(() => {
         <section class="panel admin-section">
           <div class="admin-section-header">
             <div>
-              <p class="eyebrow">Activity</p>
-              <h2>Recent events</h2>
+              <p class="eyebrow">Audit Trail</p>
+              <h2>Activity log explorer</h2>
             </div>
-            <small class="subtle">{{ recentActivity.length }} latest entries</small>
+            <small class="subtle">{{ filteredActivity.length }} of {{ recentActivity.length }} entries</small>
           </div>
 
-          <div v-if="recentActivity.length" class="admin-activity-list">
-            <article v-for="entry in recentActivity" :key="entry.id" class="admin-activity-item">
+          <div class="admin-log-controls">
+            <div class="admin-filter-row">
+              <button
+                v-for="option in activityFilterOptions"
+                :key="option.value"
+                type="button"
+                class="admin-filter-chip"
+                :class="{ active: activityFilter === option.value }"
+                @click="activityFilter = option.value"
+              >
+                {{ option.label }} {{ option.count }}
+              </button>
+            </div>
+
+            <input
+              v-model="activitySearch"
+              type="search"
+              class="admin-search-input"
+              placeholder="Search activity by event, email, workspace, or metadata"
+            />
+          </div>
+
+          <div v-if="filteredActivity.length" class="admin-activity-list">
+            <article v-for="entry in filteredActivity" :key="entry.id" class="admin-activity-item">
               <div class="admin-activity-copy">
                 <strong>{{ activityTitle(entry) }}</strong>
                 <small class="subtle">{{ humanizeEventType(entry.eventType) }}</small>
                 <small v-if="activityContext(entry)" class="subtle">{{ activityContext(entry) }}</small>
+
+                <details class="admin-error-details">
+                  <summary>Inspect event</summary>
+                  <pre>{{ formatActivityDetails(entry) }}</pre>
+                </details>
               </div>
               <small class="admin-time">{{ formatRelativeTime(entry.createdAt) }}</small>
             </article>
           </div>
 
-          <p v-else class="subtle">No tracked activity yet.</p>
+          <p v-else class="subtle">No activity matches the current filters.</p>
         </section>
       </section>
 
@@ -409,23 +572,53 @@ onMounted(() => {
           <div class="admin-section-header">
             <div>
               <p class="eyebrow">Error Logs</p>
-              <h2>Recent backend failures</h2>
+              <h2>System log explorer</h2>
             </div>
-            <small class="subtle">{{ errorLogs.length }} recent entries</small>
+            <small class="subtle">{{ filteredErrorLogs.length }} of {{ errorLogs.length }} entries</small>
           </div>
 
-          <div v-if="errorLogs.length" class="admin-error-list">
-            <article v-for="log in errorLogs" :key="log.id" class="admin-error-item">
+          <div class="admin-log-controls">
+            <div class="admin-filter-grid">
+              <label class="admin-filter-select">
+                <span>Level</span>
+                <select v-model="errorLevelFilter">
+                  <option v-for="level in errorLevelOptions" :key="level" :value="level">
+                    {{ level === 'all' ? 'All levels' : level }}
+                  </option>
+                </select>
+              </label>
+
+              <label class="admin-filter-select">
+                <span>Source</span>
+                <select v-model="errorSourceFilter">
+                  <option v-for="source in errorSourceOptions" :key="source" :value="source">
+                    {{ source === 'all' ? 'All sources' : source }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <input
+              v-model="errorSearch"
+              type="search"
+              class="admin-search-input"
+              placeholder="Search errors by message, source, request, user, stack, or metadata"
+            />
+          </div>
+
+          <div v-if="filteredErrorLogs.length" class="admin-error-list">
+            <article v-for="log in filteredErrorLogs" :key="log.id" class="admin-error-item">
               <div class="admin-error-header">
                 <strong>{{ log.message }}</strong>
-                <span class="admin-chip">{{ log.source }}</span>
+                <div class="admin-badge-row">
+                  <span class="admin-chip">{{ log.source }}</span>
+                  <span class="admin-chip" :class="{ 'admin-chip-accent': log.level === 'fatal' || log.level === 'warning' }">
+                    {{ log.level }}
+                  </span>
+                </div>
               </div>
-              <small class="subtle">
-                {{ formatDateTime(log.createdAt) }}
-                <span v-if="log.statusCode">• HTTP {{ log.statusCode }}</span>
-                <span v-if="log.requestMethod || log.requestPath">• {{ log.requestMethod }} {{ log.requestPath }}</span>
-                <span v-if="log.userEmail">• {{ log.userEmail }}</span>
-              </small>
+              <small class="subtle">{{ formatDateTime(log.createdAt) }}</small>
+              <small v-if="errorContext(log)" class="subtle">{{ errorContext(log) }}</small>
 
               <details v-if="hasErrorDetails(log)" class="admin-error-details">
                 <summary>Inspect details</summary>
@@ -434,7 +627,7 @@ onMounted(() => {
             </article>
           </div>
 
-          <p v-else class="subtle">No captured server errors yet.</p>
+          <p v-else class="subtle">No system logs match the current filters.</p>
         </section>
       </section>
 

@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { isIP } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
+import geoip from 'geoip-lite';
 import { WebSocketServer } from 'ws';
 import { buildAppleAuthUrl, exchangeAppleCode, isAppleAuthEnabled, parseAppleUserProfile } from './apple-oauth.js';
 import { issueAuthToken, issueOAuthState, verifyAuthToken, verifyOAuthState } from './auth.js';
@@ -63,9 +65,154 @@ const socketGroups = new Map();
 const userWorkspaceSockets = new Map();
 const PASSWORD_RESET_REQUEST_NOTICE = 'If an account exists for that email, a password link will arrive shortly.';
 
+app.set('trust proxy', true);
 app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+function normalizeClientIp(value = '') {
+  let normalized = String(value || '')
+    .split(',')[0]
+    .trim();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith('::ffff:')) {
+    normalized = normalized.slice(7);
+  }
+
+  if (normalized.startsWith('[') && normalized.includes(']')) {
+    normalized = normalized.slice(1, normalized.indexOf(']'));
+  }
+
+  return normalized;
+}
+
+function isPrivateOrLocalIp(ipAddress) {
+  const normalized = normalizeClientIp(ipAddress);
+  const family = isIP(normalized);
+
+  if (!family) {
+    return true;
+  }
+
+  if (family === 4) {
+    const [firstOctet, secondOctet] = normalized.split('.').map(Number);
+
+    return (
+      firstOctet === 10 ||
+      firstOctet === 127 ||
+      (firstOctet === 169 && secondOctet === 254) ||
+      (firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31) ||
+      (firstOctet === 192 && secondOctet === 168)
+    );
+  }
+
+  const lower = normalized.toLowerCase();
+  return (
+    lower === '::1' ||
+    lower.startsWith('fc') ||
+    lower.startsWith('fd') ||
+    lower.startsWith('fe80:')
+  );
+}
+
+function buildLocationLabel(location) {
+  const label = [location.city, location.region, location.country]
+    .filter(Boolean)
+    .join(', ');
+
+  return label || location.country || 'Location unavailable';
+}
+
+function lookupIpLocation(ipAddress) {
+  const normalized = normalizeClientIp(ipAddress);
+
+  if (!normalized) {
+    return {
+      status: 'missing-ip',
+      label: 'IP unavailable'
+    };
+  }
+
+  if (isPrivateOrLocalIp(normalized)) {
+    return {
+      status: 'private-or-local',
+      label: 'Private/local IP'
+    };
+  }
+
+  const match = geoip.lookup(normalized);
+  if (!match) {
+    return {
+      status: 'not-found',
+      label: 'Location unavailable'
+    };
+  }
+
+  const location = {
+    status: 'resolved',
+    city: match.city || '',
+    region: match.region || '',
+    country: match.country || '',
+    timezone: match.timezone || '',
+    latitude: Array.isArray(match.ll) ? match.ll[0] : null,
+    longitude: Array.isArray(match.ll) ? match.ll[1] : null
+  };
+
+  return {
+    ...location,
+    label: buildLocationLabel(location)
+  };
+}
+
+function getClientIp(req) {
+  if (!req) {
+    return '';
+  }
+
+  return normalizeClientIp(
+    req.headers['x-forwarded-for'] ||
+    req.ip ||
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress ||
+    ''
+  );
+}
+
+function getRequestContext(req) {
+  if (!req) {
+    return {
+      ipAddress: null,
+      userAgent: '',
+      location: {
+        status: 'missing-request',
+        label: 'Request unavailable'
+      }
+    };
+  }
+
+  const ipAddress = getClientIp(req);
+
+  return {
+    ipAddress: ipAddress || null,
+    userAgent: String(req.headers['user-agent'] || ''),
+    location: lookupIpLocation(ipAddress)
+  };
+}
+
+function buildRequestMetadata(req, metadata = {}) {
+  const requestContext = getRequestContext(req);
+
+  return {
+    ...metadata,
+    ipAddress: requestContext.ipAddress,
+    userAgent: requestContext.userAgent,
+    location: requestContext.location
+  };
+}
 
 function logBackgroundFailure(message, error, details = {}) {
   console.error(message, {
@@ -104,13 +251,13 @@ function sendError(res, error) {
       requestMethod: req?.method || '',
       requestPath: req?.originalUrl || req?.url || '',
       userId: req?.auth?.userId || null,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         params: req?.params || {},
         query: req?.query || {},
         bodyKeys: Object.keys(req?.body || {}).filter((key) => (
           !['password', 'currentPassword', 'newPassword', 'resetToken'].includes(key)
         ))
-      }
+      })
     });
   }
 
@@ -158,10 +305,10 @@ async function deliverInviteEmail({ req, invite }) {
       message: 'Failed to send invite email.',
       stack: error.stack || '',
       userId: req?.auth?.userId || null,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         inviteId: invite.id,
         email: invite.email
-      }
+      })
     });
     emailDelivery = {
       attempted: true,
@@ -209,12 +356,12 @@ async function deliverPasswordResetEmail({ req, resetRequest }) {
         source: 'password-reset-email',
         message: 'Password link email was not sent.',
         userId: resetRequest.userId,
-        metadata: {
+        metadata: buildRequestMetadata(req, {
           resetId: resetRequest.id,
           email: resetRequest.email,
           kind: resetRequest.kind,
           status: emailDelivery.status
-        }
+        })
       });
     }
   } catch (error) {
@@ -231,11 +378,11 @@ async function deliverPasswordResetEmail({ req, resetRequest }) {
       message: 'Failed to send password link email.',
       stack: error.stack || '',
       userId: resetRequest.userId,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         resetId: resetRequest.id,
         email: resetRequest.email,
         kind: resetRequest.kind
-      }
+      })
     });
   }
 }
@@ -531,10 +678,10 @@ app.post('/api/auth/register', async (req, res) => {
       targetType: 'user',
       targetId: user.id,
       workspaceId: workspace?.id || null,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         provider: 'password',
         workspaceCreated: Boolean(workspace?.id)
-      }
+      })
     });
     const token = issueAuthToken({ userId: user.id, email: user.email });
     res.status(201).json({ token, user, workspaces, defaultWorkspaceId: defaultWorkspaceId || workspace?.id || null });
@@ -559,9 +706,9 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
         eventType: 'auth.password_reset.requested',
         targetType: 'user',
         targetId: resetRequest.userId,
-        metadata: {
+        metadata: buildRequestMetadata(req, {
           kind: resetRequest.kind
-        }
+        })
       });
     }
 
@@ -587,7 +734,10 @@ app.post('/api/auth/password-reset/complete', async (req, res) => {
       actorUserId: authResult.user.id,
       eventType: 'auth.password_reset.completed',
       targetType: 'user',
-      targetId: authResult.user.id
+      targetId: authResult.user.id,
+      metadata: buildRequestMetadata(req, {
+        provider: 'password'
+      })
     });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
     res.json({
@@ -844,9 +994,9 @@ app.post('/api/auth/login', async (req, res) => {
       eventType: 'auth.login',
       targetType: 'user',
       targetId: authResult.user.id,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         provider: 'password'
-      }
+      })
     });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
     res.json({ token, user: authResult.user, workspaces: authResult.workspaces, defaultWorkspaceId: authResult.defaultWorkspaceId });
@@ -948,9 +1098,9 @@ app.get('/api/auth/google/callback', async (req, res) => {
       eventType: 'auth.oauth.google',
       targetType: 'user',
       targetId: authResult.user.id,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         provider: 'google'
-      }
+      })
     });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
 
@@ -1074,9 +1224,9 @@ app.post('/api/auth/apple/callback', async (req, res) => {
       eventType: 'auth.oauth.apple',
       targetType: 'user',
       targetId: authResult.user.id,
-      metadata: {
+      metadata: buildRequestMetadata(req, {
         provider: 'apple'
-      }
+      })
     });
     const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
 
