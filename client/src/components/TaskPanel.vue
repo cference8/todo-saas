@@ -140,123 +140,125 @@ function submitEdit(taskId) {
 
     <ul class="task-list">
       <li v-for="task in tasks" :key="task.id" class="task-row" :class="{ done: task.completedAt }">
-        <div class="task-row-main">
-          <label class="task-main">
-            <input
-              type="checkbox"
-              :checked="Boolean(task.completedAt)"
-              :disabled="pending"
-              @change="emit('toggle-task', task)"
-            />
-            <span>
-              <strong>{{ task.title }}</strong>
-              <small>Created {{ task.createdAtLabel }} by {{ task.createdByName }}</small>
-              <small v-if="task.completedAtLabel">Completed {{ task.completedAtLabel }}</small>
-            </span>
-          </label>
-
-          <div class="task-badges">
-            <span class="priority-badge" :class="`priority-${task.priority}`">{{ task.priority }}</span>
-            <span v-if="task.dueDateLabel" class="meta-badge">Due {{ task.dueDateLabel }}</span>
+        <div class="task-row-header">
+          <div class="task-row-main">
+            <label class="task-main">
+              <input
+                type="checkbox"
+                :checked="Boolean(task.completedAt)"
+                :disabled="pending"
+                @change="emit('toggle-task', task)"
+              />
+              <span>
+                <strong>{{ task.title }}</strong>
+                <small>Created {{ task.createdAtLabel }} by {{ task.createdByName }}</small>
+                <small v-if="task.completedAtLabel">Completed {{ task.completedAtLabel }}</small>
+              </span>
+            </label>
           </div>
 
-          <p v-if="task.description" class="task-note">{{ task.description }}</p>
-
-          <form
-            v-if="editingTaskId === task.id"
-            class="task-editor"
-            @submit.prevent="submitEdit(task.id)"
-          >
-            <input v-model="editDraft.title" type="text" :disabled="pending" />
-            <textarea v-model="editDraft.description" rows="3" :disabled="pending" placeholder="Task details"></textarea>
-            <div class="task-editor-row">
-              <input v-model="editDraft.dueDate" type="date" :disabled="pending" />
-              <select v-model="editDraft.priority" :disabled="pending">
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </div>
-            <div class="task-editor-actions">
-              <button type="submit" class="ghost-button" :disabled="pending || !editDraft.title.trim()">Save</button>
-              <button type="button" class="ghost-button muted-button" :disabled="pending" @click="cancelEditing">Cancel</button>
-            </div>
-          </form>
+          <div class="task-actions">
+            <button
+              type="button"
+              class="ghost-button muted-button task-action-button"
+              :disabled="pending"
+              :title="editingTaskId === task.id ? 'Hide edit options' : 'Edit task'"
+              :aria-label="editingTaskId === task.id ? 'Hide edit options' : 'Edit task'"
+              :aria-pressed="editingTaskId === task.id"
+              @click="startEditing(task)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 20h9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="ghost-danger task-action-button"
+              :disabled="pending"
+              title="Delete task"
+              aria-label="Delete task"
+              @click="emit('delete-task', task)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M3 6h18"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M8 6V4h8v2"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M19 6v14H5V6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M10 11v5M14 11v5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.8"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div class="task-actions">
-          <button
-            type="button"
-            class="ghost-button muted-button task-action-button"
-            :disabled="pending"
-            :title="editingTaskId === task.id ? 'Hide edit options' : 'Edit task'"
-            :aria-label="editingTaskId === task.id ? 'Hide edit options' : 'Edit task'"
-            :aria-pressed="editingTaskId === task.id"
-            @click="startEditing(task)"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M12 20h9"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.8"
-              />
-              <path
-                d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.8"
-              />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="ghost-danger task-action-button"
-            :disabled="pending"
-            title="Delete task"
-            aria-label="Delete task"
-            @click="emit('delete-task', task)"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M3 6h18"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.8"
-              />
-              <path
-                d="M8 6V4h8v2"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.8"
-              />
-              <path
-                d="M19 6v14H5V6"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.8"
-              />
-              <path
-                d="M10 11v5M14 11v5"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.8"
-              />
-            </svg>
-          </button>
+        <div class="task-badges">
+          <span class="priority-badge" :class="`priority-${task.priority}`">{{ task.priority }}</span>
+          <span v-if="task.dueDateLabel" class="meta-badge">Due {{ task.dueDateLabel }}</span>
         </div>
+
+        <p v-if="task.description" class="task-note">{{ task.description }}</p>
+
+        <form
+          v-if="editingTaskId === task.id"
+          class="task-editor"
+          @submit.prevent="submitEdit(task.id)"
+        >
+          <input v-model="editDraft.title" type="text" :disabled="pending" />
+          <textarea v-model="editDraft.description" rows="3" :disabled="pending" placeholder="Task details"></textarea>
+          <div class="task-editor-row">
+            <input v-model="editDraft.dueDate" type="date" :disabled="pending" />
+            <select v-model="editDraft.priority" :disabled="pending">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div class="task-editor-actions">
+            <button type="submit" class="ghost-button" :disabled="pending || !editDraft.title.trim()">Save</button>
+            <button type="button" class="ghost-button muted-button" :disabled="pending" @click="cancelEditing">Cancel</button>
+          </div>
+        </form>
       </li>
       <li v-if="!tasks.length" class="task-empty">No tasks yet. Add the first item to start collaborating.</li>
     </ul>
