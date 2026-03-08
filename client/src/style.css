@@ -738,6 +738,21 @@ textarea {
   box-shadow: var(--surface-invite-active-shadow);
 }
 
+.invite-row.clickable {
+  cursor: pointer;
+}
+
+.invite-row.clickable:hover {
+  transform: translateY(-1px);
+}
+
+.invite-row.clickable:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--focus-ring),
+    var(--surface-invite-active-shadow);
+}
+
 .invite-row-header {
   display: flex;
   justify-content: space-between;
@@ -748,11 +763,9 @@ textarea {
 .invite-summary {
   flex: 1;
   min-width: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
+  display: flex;
+  flex-direction: column;
   text-align: left;
-  cursor: pointer;
 }
 
 .invite-email {

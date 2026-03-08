@@ -156,6 +156,7 @@ export async function initDb() {
       workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       email TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      token TEXT,
       token_hash TEXT NOT NULL UNIQUE,
       invited_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
       accepted_at TIMESTAMPTZ,
@@ -164,8 +165,38 @@ export async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    UPDATE workspace_invites
+    SET email = LOWER(email)
+    WHERE email <> LOWER(email);
+
+    ALTER TABLE workspace_invites ADD COLUMN IF NOT EXISTS token TEXT;
+
+    DELETE FROM workspace_invites
+    WHERE accepted_at IS NULL
+      AND expires_at <= NOW();
+
+    DELETE FROM workspace_invites wi
+    USING (
+      SELECT id
+      FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY workspace_id, email
+                 ORDER BY created_at DESC, id DESC
+               ) AS row_num
+        FROM workspace_invites
+        WHERE accepted_at IS NULL
+      ) ranked
+      WHERE row_num > 1
+    ) duplicates
+    WHERE wi.id = duplicates.id;
+
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace_id ON workspace_invites(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites(email);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_token ON workspace_invites(token) WHERE token IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_one_pending_email
+    ON workspace_invites(workspace_id, email)
+    WHERE accepted_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject ON users(google_subject) WHERE google_subject IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_subject ON users(apple_subject) WHERE apple_subject IS NOT NULL;
   `);
@@ -510,6 +541,7 @@ export async function createWorkspace({ userId, name }) {
     return workspace;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+
     throw error;
   } finally {
     client.release();
@@ -572,6 +604,7 @@ export async function renameWorkspace({ workspaceId, actorUserId, name }) {
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+
     throw error;
   } finally {
     client.release();
@@ -1142,51 +1175,101 @@ export async function addWorkspaceMember({ workspaceId, email, role = 'member' }
 
 export async function createWorkspaceInvite({ workspaceId, userId, email, role = 'member' }) {
   const normalizedEmail = email.toLowerCase();
-  const token = issueInviteToken();
-  const tokenHash = hashInviteToken(token);
+  const client = await pool.connect();
 
-  const [membershipResult, workspaceResult, inviterResult] = await Promise.all([
-    pool.query(
-      `SELECT 1
-       FROM workspace_members wm
-       JOIN users u ON u.id = wm.user_id
-       WHERE wm.workspace_id = $1 AND u.email = $2`,
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `DELETE FROM workspace_invites
+       WHERE workspace_id = $1
+         AND email = $2
+         AND accepted_at IS NULL
+         AND expires_at <= NOW()`,
       [workspaceId, normalizedEmail]
-    ),
-    pool.query(
-      `SELECT id, name, slug
-       FROM workspaces
-       WHERE id = $1`,
-      [workspaceId]
-    ),
-    pool.query(
-      `SELECT name, email
-       FROM users
-       WHERE id = $1`,
-      [userId]
-    )
-  ]);
+    );
 
-  if (membershipResult.rowCount) {
-    const error = new Error('That user is already a member of this workspace.');
-    error.status = 409;
+    const token = issueInviteToken();
+    const tokenHash = hashInviteToken(token);
+    const [membershipResult, workspaceResult, inviterResult, pendingInviteResult] = await Promise.all([
+      client.query(
+        `SELECT 1
+         FROM workspace_members wm
+         JOIN users u ON u.id = wm.user_id
+         WHERE wm.workspace_id = $1 AND u.email = $2`,
+        [workspaceId, normalizedEmail]
+      ),
+      client.query(
+        `SELECT id, name, slug
+         FROM workspaces
+         WHERE id = $1`,
+        [workspaceId]
+      ),
+      client.query(
+        `SELECT name, email
+         FROM users
+         WHERE id = $1`,
+        [userId]
+      ),
+      client.query(
+        `SELECT id
+         FROM workspace_invites
+         WHERE workspace_id = $1
+           AND email = $2
+           AND accepted_at IS NULL
+           AND expires_at > NOW()
+         LIMIT 1`,
+        [workspaceId, normalizedEmail]
+      )
+    ]);
+
+    if (membershipResult.rowCount) {
+      const error = new Error('That user is already a member of this workspace.');
+      error.status = 409;
+      throw error;
+    }
+
+    if (pendingInviteResult.rowCount) {
+      const error = new Error('There is already a pending invite for that email.');
+      error.status = 409;
+      throw error;
+    }
+
+    const result = await client.query(
+      `INSERT INTO workspace_invites (workspace_id, email, role, token, token_hash, invited_by_user_id, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW() + ($7 * INTERVAL '1 day'))
+       RETURNING id, email, role, created_at AS "createdAt", expires_at AS "expiresAt"`,
+      [workspaceId, normalizedEmail, role, token, tokenHash, userId, INVITE_TTL_DAYS]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      ...result.rows[0],
+      invitedByName: inviterResult.rows[0]?.name || '',
+      invitedByEmail: inviterResult.rows[0]?.email || '',
+      workspace: workspaceResult.rows[0],
+      token
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+
+    if (error.code === '23505' && error.constraint === 'idx_workspace_invites_one_pending_email') {
+      const pendingInviteError = new Error('There is already a pending invite for that email.');
+      pendingInviteError.status = 409;
+      throw pendingInviteError;
+    }
+
+    if (error.code === '23505' && error.constraint === 'idx_workspace_invites_token') {
+      const tokenConflictError = new Error('Failed to issue an invite link. Please try again.');
+      tokenConflictError.status = 409;
+      throw tokenConflictError;
+    }
+
     throw error;
+  } finally {
+    client.release();
   }
-
-  const result = await pool.query(
-    `INSERT INTO workspace_invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at)
-     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 * INTERVAL '1 day'))
-     RETURNING id, email, role, created_at AS "createdAt", expires_at AS "expiresAt"`,
-    [workspaceId, normalizedEmail, role, tokenHash, userId, INVITE_TTL_DAYS]
-  );
-
-  return {
-    ...result.rows[0],
-    invitedByName: inviterResult.rows[0]?.name || '',
-    invitedByEmail: inviterResult.rows[0]?.email || '',
-    workspace: workspaceResult.rows[0],
-    token
-  };
 }
 
 export async function cancelWorkspaceInvite({ workspaceId, inviteId }) {
@@ -1262,13 +1345,14 @@ export async function resendWorkspaceInvite({ workspaceId, inviteId, userId }) {
     const tokenHash = hashInviteToken(token);
     const result = await client.query(
       `UPDATE workspace_invites
-       SET token_hash = $3,
-           invited_by_user_id = $4,
-           expires_at = NOW() + ($5 * INTERVAL '1 day')
+       SET token = $3,
+           token_hash = $4,
+           invited_by_user_id = $5,
+           expires_at = NOW() + ($6 * INTERVAL '1 day')
        WHERE id = $1
          AND workspace_id = $2
        RETURNING id, email, role, created_at AS "createdAt", expires_at AS "expiresAt"`,
-      [inviteId, workspaceId, tokenHash, userId, INVITE_TTL_DAYS]
+      [inviteId, workspaceId, token, tokenHash, userId, INVITE_TTL_DAYS]
     );
 
     await client.query('COMMIT');
@@ -1282,10 +1366,78 @@ export async function resendWorkspaceInvite({ workspaceId, inviteId, userId }) {
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+
+    if (error.code === '23505' && error.constraint === 'idx_workspace_invites_token') {
+      const tokenConflictError = new Error('Failed to issue an invite link. Please try again.');
+      tokenConflictError.status = 409;
+      throw tokenConflictError;
+    }
+
     throw error;
   } finally {
     client.release();
   }
+}
+
+export async function getWorkspaceInviteLink({ workspaceId, inviteId }) {
+  const [workspaceResult, inviteResult] = await Promise.all([
+    pool.query(
+      `SELECT id, name, slug
+       FROM workspaces
+       WHERE id = $1`,
+      [workspaceId]
+    ),
+    pool.query(
+      `SELECT wi.id,
+              wi.email,
+              wi.role,
+              wi.token,
+              wi.accepted_at AS "acceptedAt",
+              wi.created_at AS "createdAt",
+              wi.expires_at AS "expiresAt"
+       FROM workspace_invites wi
+       WHERE wi.id = $1
+         AND wi.workspace_id = $2`,
+      [inviteId, workspaceId]
+    )
+  ]);
+
+  if (!workspaceResult.rowCount) {
+    const error = new Error('Workspace not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  const invite = inviteResult.rows[0];
+  if (!invite || invite.acceptedAt || invite.expiresAt <= new Date()) {
+    const error = new Error('Invite not found or no longer pending.');
+    error.status = 404;
+    throw error;
+  }
+
+  const membershipResult = await pool.query(
+    `SELECT 1
+     FROM workspace_members wm
+     JOIN users u ON u.id = wm.user_id
+     WHERE wm.workspace_id = $1 AND u.email = $2`,
+    [workspaceId, invite.email]
+  );
+  if (membershipResult.rowCount) {
+    const error = new Error('That user is already a member of this workspace.');
+    error.status = 409;
+    throw error;
+  }
+
+  if (!invite.token) {
+    const error = new Error('This invite was created before reusable links were supported. Resend it to generate a new link.');
+    error.status = 409;
+    throw error;
+  }
+
+  return {
+    ...invite,
+    workspace: workspaceResult.rows[0]
+  };
 }
 
 export async function getInviteByToken(inviteToken) {

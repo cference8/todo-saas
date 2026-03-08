@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, nextTick, reactive, ref } from 'vue';
 
 const EMAIL_PREVIEW_LIMIT = 17;
 
@@ -71,6 +71,8 @@ const lastInviteNoticeTone = ref('muted');
 const activeInviteId = ref(null);
 const activeMemberId = ref(null);
 const promoteMemberTarget = ref(null);
+const cancelInviteTarget = ref(null);
+const latestInviteLinkCardRef = ref(null);
 const modalMode = ref('');
 const modalError = ref('');
 
@@ -83,7 +85,8 @@ const canRenameWorkspace = computed(() => props.role === 'owner');
 const canDeleteWorkspace = computed(() => props.role === 'owner' && props.memberCount <= 1);
 const canLeaveWorkspace = computed(() => props.role === 'member' || (props.role === 'owner' && props.memberCount > 1));
 const ownerMustTransfer = computed(() => props.role === 'owner' && props.memberCount > 1 && props.ownerCount < 2);
-const canInvite = computed(() => props.role === 'owner');
+const canManageMembers = computed(() => props.role === 'owner');
+const canCreateInvite = computed(() => props.role === 'owner' || props.role === 'member');
 
 function handleManageWorkspace() {
   modalMode.value = 'manage-workspace';
@@ -116,6 +119,7 @@ function closeModal() {
   modalMode.value = '';
   modalError.value = '';
   promoteMemberTarget.value = null;
+  cancelInviteTarget.value = null;
 }
 
 function submitCreateWorkspace() {
@@ -158,6 +162,10 @@ function applyInviteResult(result = {}) {
   lastInviteUrl.value = result.invite?.inviteUrl || '';
   lastInviteNotice.value = result.notice || result.invite?.emailDelivery?.message || 'Invite link ready.';
   lastInviteNoticeTone.value = result.tone || (result.invite?.emailDelivery?.ok ? 'success' : 'warning');
+
+  if (lastInviteUrl.value) {
+    queueLatestInviteLinkScroll();
+  }
 }
 
 function submitInvite() {
@@ -171,6 +179,18 @@ function submitInvite() {
 async function copyLatestInvite() {
   if (!lastInviteUrl.value) return;
   await navigator.clipboard.writeText(lastInviteUrl.value);
+}
+
+function queueLatestInviteLinkScroll() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+  if (!window.matchMedia('(max-width: 720px)').matches) return;
+
+  nextTick(() => {
+    latestInviteLinkCardRef.value?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    });
+  });
 }
 
 function toggleInviteActions(inviteId) {
@@ -198,23 +218,30 @@ function resendInvite(invite) {
   });
 }
 
-function cancelInvite(invite) {
-  const confirmed = window.confirm(`Cancel the invite for ${invite.email}?`);
-  if (!confirmed) return;
+function handleCancelInvite(invite) {
+  cancelInviteTarget.value = invite;
+  modalMode.value = 'cancel-invite';
+  modalError.value = '';
+}
 
+function confirmCancelInvite() {
+  if (!cancelInviteTarget.value) return;
+
+  const invite = cancelInviteTarget.value;
   emit('cancel-invite', invite, () => {
     lastInviteNotice.value = `Invite canceled for ${invite.email}.`;
     lastInviteNoticeTone.value = 'warning';
     activeInviteId.value = null;
+    closeModal();
   });
 }
 
 function canRemoveMember(member) {
-  return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
+  return canManageMembers.value && member.id !== props.currentUser?.id && member.role !== 'owner';
 }
 
 function canPromoteMember(member) {
-  return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
+  return canManageMembers.value && member.id !== props.currentUser?.id && member.role !== 'owner';
 }
 
 function canManageMember(member) {
@@ -292,20 +319,6 @@ function formatEmailPreview(email) {
         </div>
       </section>
 
-      <section v-if="canInvite" class="workspace-section">
-        <div class="workspace-section-header">
-          <div>
-            <p class="eyebrow">Invite</p>
-            <h2>Add a teammate</h2>
-          </div>
-        </div>
-
-        <form class="invite-form" @submit.prevent="submitInvite">
-          <input v-model="inviteEmail" type="email" placeholder="Invite teammate by email" :disabled="pending" />
-          <button type="submit" :disabled="pending || !inviteEmail.trim()">Create invite</button>
-        </form>
-      </section>
-
       <section class="workspace-section">
         <div class="workspace-section-header">
           <div>
@@ -314,6 +327,11 @@ function formatEmailPreview(email) {
           </div>
           <small class="subtle">{{ memberCount }} total</small>
         </div>
+
+        <form v-if="canCreateInvite" class="invite-form" @submit.prevent="submitInvite">
+          <input v-model="inviteEmail" type="email" placeholder="Add a teammate by email" :disabled="pending" />
+          <button type="submit" :disabled="pending || !inviteEmail.trim()">Send Invite</button>
+        </form>
 
         <div class="member-list">
           <div
@@ -361,7 +379,7 @@ function formatEmailPreview(email) {
       </section>
 
       <section v-if="lastInviteUrl" class="workspace-section">
-        <div class="invite-link-card">
+        <div ref="latestInviteLinkCardRef" class="invite-link-card">
           <p class="subtle">Latest invite link</p>
           <input :value="lastInviteUrl" readonly />
           <p class="invite-feedback" :class="lastInviteNoticeTone">{{ lastInviteNotice }}</p>
@@ -383,12 +401,17 @@ function formatEmailPreview(email) {
             v-for="invite in invites"
             :key="invite.id"
             class="invite-row"
-            :class="{ active: activeInviteId === invite.id }"
+            :class="{ active: activeInviteId === invite.id, clickable: true }"
+            role="button"
+            tabindex="0"
+            @click="toggleInviteActions(invite.id)"
+            @keydown.enter.prevent="toggleInviteActions(invite.id)"
+            @keydown.space.prevent="toggleInviteActions(invite.id)"
           >
             <div class="invite-row-header">
-              <button type="button" class="invite-summary" :disabled="pending" @click="toggleInviteActions(invite.id)">
+              <div class="invite-summary">
                 <strong class="invite-email">{{ invite.email }}</strong>
-              </button>
+              </div>
               <small class="member-role invite-role">{{ invite.role }}</small>
             </div>
             <div class="invite-row-meta">
@@ -396,9 +419,9 @@ function formatEmailPreview(email) {
               <span>Expires {{ new Date(invite.expiresAt).toLocaleString() }}</span>
             </div>
             <div v-if="activeInviteId === invite.id" class="invite-actions">
-              <button type="button" class="ghost-button muted-button" :disabled="pending" @click="copyInviteLink(invite)">Copy link</button>
-              <button type="button" class="ghost-button muted-button" :disabled="pending" @click="resendInvite(invite)">Resend</button>
-              <button type="button" class="ghost-danger" :disabled="pending" @click="cancelInvite(invite)">Cancel</button>
+              <button type="button" class="ghost-button muted-button" :disabled="pending" @click.stop="copyInviteLink(invite)">Copy link</button>
+              <button type="button" class="ghost-button muted-button" :disabled="pending" @click.stop="resendInvite(invite)">Resend</button>
+              <button type="button" class="ghost-danger" :disabled="pending" @click.stop="handleCancelInvite(invite)">Cancel</button>
             </div>
           </div>
         </div>
@@ -529,7 +552,7 @@ function formatEmailPreview(email) {
         <div>
           <p class="eyebrow">Promote member</p>
           <h2>Make {{ promoteMemberTarget.name }} an owner?</h2>
-          <p class="subtle">Owners can invite people, manage members, and rename this workspace.</p>
+          <p class="subtle">Owners can manage members and rename this workspace.</p>
         </div>
 
         <div class="modal-actions">
@@ -537,6 +560,19 @@ function formatEmailPreview(email) {
           <button class="ghost-button" type="button" :disabled="pending" @click="confirmPromoteMember">
             Make owner
           </button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'cancel-invite' && cancelInviteTarget">
+        <div>
+          <p class="eyebrow">Cancel invite</p>
+          <h2>Cancel the invite for {{ cancelInviteTarget.email }}?</h2>
+          <p class="subtle">That invite link will stop working. You can send a new invite later if needed.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Keep invite</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmCancelInvite">Cancel invite</button>
         </div>
       </template>
 

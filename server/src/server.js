@@ -26,6 +26,7 @@ import {
   ensureMembership,
   getAuthSession,
   getInviteByToken,
+  getWorkspaceInviteLink,
   getSnapshot,
   initDb,
   leaveWorkspace,
@@ -765,8 +766,8 @@ app.get('/api/invites/:token', async (req, res) => {
 
 app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
   try {
-    if (req.membership.role !== 'owner') {
-      res.status(403).json({ error: 'Only workspace owners can create invites.' });
+    if (!['owner', 'member'].includes(req.membership.role)) {
+      res.status(403).json({ error: 'You do not have permission to create invites in this workspace.' });
       return;
     }
 
@@ -788,8 +789,8 @@ app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
 
 app.post('/api/invites/:id/resend', requireAuth, requireWorkspace, async (req, res) => {
   try {
-    if (req.membership.role !== 'owner') {
-      res.status(403).json({ error: 'Only workspace owners can manage invites.' });
+    if (!['owner', 'member'].includes(req.membership.role)) {
+      res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
       return;
     }
 
@@ -809,19 +810,17 @@ app.post('/api/invites/:id/resend', requireAuth, requireWorkspace, async (req, r
 
 app.post('/api/invites/:id/link', requireAuth, requireWorkspace, async (req, res) => {
   try {
-    if (req.membership.role !== 'owner') {
-      res.status(403).json({ error: 'Only workspace owners can manage invites.' });
+    if (!['owner', 'member'].includes(req.membership.role)) {
+      res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
       return;
     }
 
-    const invite = await resendWorkspaceInvite({
+    const invite = await getWorkspaceInviteLink({
       workspaceId: req.workspaceId,
-      inviteId: Number(req.params.id),
-      userId: req.auth.userId
+      inviteId: Number(req.params.id)
     });
     const inviteUrl = buildInviteUrl(req, invite.token);
 
-    broadcastToWorkspace(req.workspaceId, 'invite.link_refreshed', { inviteId: invite.id, email: invite.email });
     res.json({
       invite: {
         id: invite.id,
@@ -839,8 +838,8 @@ app.post('/api/invites/:id/link', requireAuth, requireWorkspace, async (req, res
 
 app.delete('/api/invites/:id', requireAuth, requireWorkspace, async (req, res) => {
   try {
-    if (req.membership.role !== 'owner') {
-      res.status(403).json({ error: 'Only workspace owners can manage invites.' });
+    if (!['owner', 'member'].includes(req.membership.role)) {
+      res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
       return;
     }
 

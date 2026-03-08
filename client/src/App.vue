@@ -707,11 +707,10 @@ async function copyInviteLink(invite, onCompleted) {
     if (typeof onCompleted === 'function') {
       onCompleted({
         invite: response.invite,
-        notice: `Fresh invite link ready for ${invite.email}.`,
+        notice: `Invite link copied for ${invite.email}.`,
         tone: 'success'
       });
     }
-    await loadBootstrap();
   });
 }
 

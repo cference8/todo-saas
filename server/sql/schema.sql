@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS workspace_invites (
   workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'member',
+  token TEXT,
   token_hash TEXT NOT NULL UNIQUE,
   invited_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
   accepted_at TIMESTAMPTZ,
@@ -61,6 +62,32 @@ CREATE TABLE IF NOT EXISTS workspace_invites (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+UPDATE workspace_invites
+SET email = LOWER(email)
+WHERE email <> LOWER(email);
+
+ALTER TABLE workspace_invites ADD COLUMN IF NOT EXISTS token TEXT;
+
+DELETE FROM workspace_invites
+WHERE accepted_at IS NULL
+  AND expires_at <= NOW();
+
+DELETE FROM workspace_invites wi
+USING (
+  SELECT id
+  FROM (
+    SELECT id,
+           ROW_NUMBER() OVER (
+             PARTITION BY workspace_id, email
+             ORDER BY created_at DESC, id DESC
+           ) AS row_num
+    FROM workspace_invites
+    WHERE accepted_at IS NULL
+  ) ranked
+  WHERE row_num > 1
+) duplicates
+WHERE wi.id = duplicates.id;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject
 ON users(google_subject)
 WHERE google_subject IS NOT NULL;
@@ -68,3 +95,11 @@ WHERE google_subject IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_subject
 ON users(apple_subject)
 WHERE apple_subject IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_token
+ON workspace_invites(token)
+WHERE token IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_one_pending_email
+ON workspace_invites(workspace_id, email)
+WHERE accepted_at IS NULL;
