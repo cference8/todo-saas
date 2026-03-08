@@ -16,9 +16,11 @@ import {
   authenticateWithGoogle,
   authenticateUser,
   cancelWorkspaceInvite,
+  createWorkspace,
   createList,
   createTask,
   createWorkspaceInvite,
+  deleteWorkspace,
   deleteList,
   deleteTask,
   ensureMembership,
@@ -26,6 +28,7 @@ import {
   getInviteByToken,
   getSnapshot,
   initDb,
+  leaveWorkspace,
   removeWorkspaceMember,
   registerUser,
   resendWorkspaceInvite,
@@ -284,6 +287,8 @@ function revokeWorkspaceAccess({ workspaceId, userId, reason = 'Access revoked.'
   const userKey = `${workspaceId}:${userId}`;
   const sockets = userWorkspaceSockets.get(userKey);
   if (!sockets?.size) return;
+  const workspaceKey = String(workspaceId);
+  const group = socketGroups.get(workspaceKey);
 
   const payload = JSON.stringify({
     type: 'access_revoked',
@@ -293,11 +298,21 @@ function revokeWorkspaceAccess({ workspaceId, userId, reason = 'Access revoked.'
     }
   });
 
-  for (const socket of sockets) {
+  for (const socket of Array.from(sockets)) {
+    group?.delete(socket);
+    sockets.delete(socket);
     if (socket.readyState === 1) {
       socket.send(payload);
     }
     socket.close(4001, 'workspace access revoked');
+  }
+
+  if (group && !group.size) {
+    socketGroups.delete(workspaceKey);
+  }
+
+  if (!sockets.size) {
+    userWorkspaceSockets.delete(userKey);
   }
 }
 
@@ -347,6 +362,90 @@ app.get('/api/auth/session', requireAuth, async (req, res) => {
   try {
     const session = await getAuthSession(req.auth.userId);
     res.json(session);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/workspaces', requireAuth, async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    if (!name) {
+      res.status(400).json({ error: 'Workspace name is required.' });
+      return;
+    }
+
+    const workspace = await createWorkspace({ userId: req.auth.userId, name });
+    const session = await getAuthSession(req.auth.userId);
+    res.status(201).json({
+      workspace,
+      workspaces: session.workspaces,
+      defaultWorkspaceId: workspace.id
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/workspaces/:id/leave', requireAuth, async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    if (!workspaceId) {
+      res.status(400).json({ error: 'Workspace id is required.' });
+      return;
+    }
+
+    const leftWorkspace = await leaveWorkspace({
+      workspaceId,
+      userId: req.auth.userId
+    });
+    revokeWorkspaceAccess({
+      workspaceId,
+      userId: req.auth.userId,
+      reason: `You left ${leftWorkspace.workspaceName}.`
+    });
+    broadcastToWorkspace(workspaceId, 'member.left', {
+      userId: req.auth.userId
+    });
+
+    const session = await getAuthSession(req.auth.userId);
+    res.json({
+      workspaces: session.workspaces,
+      defaultWorkspaceId: session.defaultWorkspaceId,
+      leftWorkspaceId: workspaceId
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete('/api/workspaces/:id', requireAuth, async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    if (!workspaceId) {
+      res.status(400).json({ error: 'Workspace id is required.' });
+      return;
+    }
+
+    const deletedWorkspace = await deleteWorkspace({
+      workspaceId,
+      actorUserId: req.auth.userId
+    });
+
+    for (const member of deletedWorkspace.members) {
+      revokeWorkspaceAccess({
+        workspaceId,
+        userId: member.userId,
+        reason: `${deletedWorkspace.workspaceName} was deleted.`
+      });
+    }
+
+    const session = await getAuthSession(req.auth.userId);
+    res.json({
+      workspaces: session.workspaces,
+      defaultWorkspaceId: session.defaultWorkspaceId,
+      deletedWorkspaceId: workspaceId
+    });
   } catch (error) {
     sendError(res, error);
   }

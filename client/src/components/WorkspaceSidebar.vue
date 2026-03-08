@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 
 const props = defineProps({
   currentListId: {
@@ -14,6 +14,14 @@ const props = defineProps({
     type: Array,
     required: true
   },
+  role: {
+    type: String,
+    default: 'member'
+  },
+  workspace: {
+    type: Object,
+    default: null
+  },
   workspaceId: {
     type: Number,
     required: true
@@ -24,14 +32,27 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['select-list', 'create-list', 'delete-list', 'select-workspace']);
+const emit = defineEmits([
+  'select-list',
+  'create-list',
+  'delete-list',
+  'select-workspace',
+  'create-workspace',
+  'leave-workspace',
+  'delete-workspace'
+]);
 const modalMode = ref('');
 const createForm = reactive({
   name: '',
   type: 'task'
 });
+const workspaceForm = reactive({
+  name: ''
+});
 const deleteTarget = ref(null);
 const modalError = ref('');
+const canLeaveWorkspace = computed(() => props.role === 'member');
+const canDeleteWorkspace = computed(() => props.role === 'owner');
 
 function handleCreateList() {
   modalMode.value = 'create';
@@ -43,6 +64,22 @@ function handleCreateList() {
 function handleDeleteList(list) {
   deleteTarget.value = list;
   modalMode.value = 'delete';
+  modalError.value = '';
+}
+
+function handleCreateWorkspace() {
+  modalMode.value = 'create-workspace';
+  workspaceForm.name = '';
+  modalError.value = '';
+}
+
+function handleLeaveWorkspace() {
+  modalMode.value = 'leave-workspace';
+  modalError.value = '';
+}
+
+function handleDeleteWorkspace() {
+  modalMode.value = 'delete-workspace';
   modalError.value = '';
 }
 
@@ -65,6 +102,26 @@ function submitCreateList() {
 function confirmDeleteList() {
   if (!deleteTarget.value) return;
   emit('delete-list', deleteTarget.value.id);
+  closeModal();
+}
+
+function submitCreateWorkspace() {
+  if (!workspaceForm.name.trim()) {
+    modalError.value = 'Workspace name is required.';
+    return;
+  }
+
+  emit('create-workspace', workspaceForm.name.trim());
+  closeModal();
+}
+
+function confirmLeaveWorkspace() {
+  emit('leave-workspace');
+  closeModal();
+}
+
+function confirmDeleteWorkspace() {
+  emit('delete-workspace');
   closeModal();
 }
 </script>
@@ -90,6 +147,16 @@ function confirmDeleteList() {
         {{ workspace.name }} • {{ workspace.role }}
       </option>
     </select>
+
+    <div class="workspace-actions">
+      <button class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
+      <button v-if="canLeaveWorkspace" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
+        Leave workspace
+      </button>
+      <button v-else-if="canDeleteWorkspace" class="ghost-danger" :disabled="pending" @click="handleDeleteWorkspace">
+        Delete workspace
+      </button>
+    </div>
 
     <div class="sidebar-list">
       <article
@@ -146,6 +213,50 @@ function confirmDeleteList() {
         <div class="modal-actions">
           <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
           <button class="ghost-button" type="button" :disabled="pending" @click="submitCreateList">Create list</button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'create-workspace'">
+        <div>
+          <p class="eyebrow">New workspace</p>
+          <h2>Create another workspace</h2>
+          <p class="subtle">You will become the owner and start with fresh default lists.</p>
+        </div>
+
+        <div class="modal-form">
+          <input v-model="workspaceForm.name" type="text" placeholder="Workspace name" :disabled="pending" />
+          <p v-if="modalError" class="form-error">{{ modalError }}</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+          <button class="ghost-button" type="button" :disabled="pending" @click="submitCreateWorkspace">Create workspace</button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'leave-workspace'">
+        <div>
+          <p class="eyebrow">Leave workspace</p>
+          <h2>Leave {{ workspace?.name || 'this workspace' }}?</h2>
+          <p class="subtle">You will lose access immediately. You can only rejoin if an owner invites you again.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmLeaveWorkspace">Leave workspace</button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'delete-workspace'">
+        <div>
+          <p class="eyebrow">Delete workspace</p>
+          <h2>Delete {{ workspace?.name || 'this workspace' }}?</h2>
+          <p class="subtle">This permanently removes all lists, tasks, invites, and member access for this workspace.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmDeleteWorkspace">Delete workspace</button>
         </div>
       </template>
 

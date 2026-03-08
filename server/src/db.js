@@ -35,7 +35,7 @@ function defaultWorkspaceNameFor(name) {
 }
 
 async function createWorkspaceForUser(client, { userId, workspaceName }) {
-  const workspaceSlug = `${slugify(workspaceName)}-${String(userId)}`;
+  const workspaceSlug = `${slugify(workspaceName)}-${String(userId)}-${crypto.randomBytes(4).toString('hex')}`;
   const workspaceResult = await client.query(
     `INSERT INTO workspaces (name, slug, created_by_user_id)
      VALUES ($1, $2, $3)
@@ -468,6 +468,32 @@ export async function getUserWorkspaces(userId) {
   return result.rows;
 }
 
+export async function createWorkspace({ userId, name }) {
+  const workspaceName = String(name || '').trim();
+  if (!workspaceName) {
+    const error = new Error('Workspace name is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const workspace = await createWorkspaceForUser(client, {
+      userId,
+      workspaceName
+    });
+    await client.query('COMMIT');
+    return workspace;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getWorkspaceMembers(workspaceId) {
   const result = await pool.query(
     `SELECT u.id, u.name, u.email, wm.role, wm.joined_at AS "joinedAt"
@@ -536,6 +562,124 @@ export async function removeWorkspaceMember({ workspaceId, actorUserId, targetUs
 
     await client.query('COMMIT');
     return target;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function leaveWorkspace({ workspaceId, userId }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const membershipResult = await client.query(
+      `SELECT wm.user_id AS "userId",
+              wm.role,
+              w.name AS "workspaceName"
+       FROM workspace_members wm
+       JOIN workspaces w ON w.id = wm.workspace_id
+       WHERE wm.workspace_id = $1 AND wm.user_id = $2
+       FOR UPDATE`,
+      [workspaceId, userId]
+    );
+
+    if (!membershipResult.rowCount) {
+      const error = new Error('Workspace not found for this user.');
+      error.status = 404;
+      throw error;
+    }
+
+    const membership = membershipResult.rows[0];
+    if (membership.role === 'owner') {
+      const error = new Error('Owners cannot leave a workspace they own. Delete it instead.');
+      error.status = 400;
+      throw error;
+    }
+
+    await client.query(
+      `DELETE FROM workspace_members
+       WHERE workspace_id = $1 AND user_id = $2`,
+      [workspaceId, userId]
+    );
+
+    await client.query('COMMIT');
+    return {
+      workspaceId: Number(workspaceId),
+      userId: Number(userId),
+      workspaceName: membership.workspaceName
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteWorkspace({ workspaceId, actorUserId }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const membershipResult = await client.query(
+      `SELECT wm.role,
+              w.name AS "workspaceName"
+       FROM workspace_members wm
+       JOIN workspaces w ON w.id = wm.workspace_id
+       WHERE wm.workspace_id = $1 AND wm.user_id = $2
+       FOR UPDATE`,
+      [workspaceId, actorUserId]
+    );
+
+    if (!membershipResult.rowCount) {
+      const error = new Error('Workspace not found for this user.');
+      error.status = 404;
+      throw error;
+    }
+
+    if (membershipResult.rows[0].role !== 'owner') {
+      const error = new Error('Only workspace owners can delete a workspace.');
+      error.status = 403;
+      throw error;
+    }
+
+    const membersResult = await client.query(
+      `SELECT wm.user_id AS "userId",
+              u.email
+       FROM workspace_members wm
+       JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = $1
+       ORDER BY wm.joined_at ASC`,
+      [workspaceId]
+    );
+
+    const deleteResult = await client.query(
+      `DELETE FROM workspaces
+       WHERE id = $1
+       RETURNING id, name`,
+      [workspaceId]
+    );
+
+    if (!deleteResult.rowCount) {
+      const error = new Error('Workspace not found.');
+      error.status = 404;
+      throw error;
+    }
+
+    await client.query('COMMIT');
+    return {
+      workspaceId: Number(workspaceId),
+      workspaceName: deleteResult.rows[0].name,
+      members: membersResult.rows.map((member) => ({
+        userId: Number(member.userId),
+        email: member.email
+      }))
+    };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

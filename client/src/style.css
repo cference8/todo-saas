@@ -200,6 +200,7 @@ button {
 .modal-form > select,
 .auth-form input,
 .invite-form input,
+.no-workspace-form input,
 .invite-link-card input,
 .composer input,
 .composer select,
@@ -226,6 +227,12 @@ textarea {
   display: grid;
   gap: 0.8rem;
   margin-top: 1.2rem;
+}
+
+.workspace-actions {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
 }
 
 .member-list {
@@ -458,6 +465,7 @@ textarea {
 
 .composer,
 .invite-form,
+.no-workspace-form,
 .invite-link-card,
 .auth-form {
   display: grid;
@@ -477,6 +485,11 @@ textarea {
 .invite-form,
 .invite-link-card {
   margin-top: auto;
+}
+
+.no-workspace-form {
+  width: min(100%, 340px);
+  align-self: center;
 }
 
 .composer {

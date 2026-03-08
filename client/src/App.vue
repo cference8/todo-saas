@@ -29,6 +29,7 @@ const appleAuthEnabled = ref(false);
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
 const inviteDetails = ref(null);
 const revokedWorkspaceId = ref(0);
+const noWorkspaceName = ref('');
 let socket;
 let reconnectTimer;
 let allowReconnect = true;
@@ -165,6 +166,37 @@ function clearWorkspaceState() {
   activeListId.value = null;
 }
 
+async function applyWorkspaceMembershipUpdate({ workspaces = [], preferredWorkspaceId = 0, statusMessage = '' }) {
+  disconnectSocket();
+
+  const nextMemberships = normalizeMemberships(workspaces);
+  memberships.value = nextMemberships;
+
+  const preferredId = Number(preferredWorkspaceId) || 0;
+  const hasPreferredWorkspace = preferredId && nextMemberships.some((membership) => membership.id === preferredId);
+  const nextWorkspaceId = hasPreferredWorkspace ? preferredId : nextMemberships[0]?.id || 0;
+
+  if (!nextWorkspaceId) {
+    workspaceId.value = 0;
+    revokedWorkspaceId.value = 0;
+    localStorage.removeItem(WORKSPACE_KEY);
+    clearWorkspaceState();
+    if (statusMessage) {
+      lastEvent.value = statusMessage;
+    }
+    return;
+  }
+
+  workspaceId.value = Number(nextWorkspaceId);
+  revokedWorkspaceId.value = 0;
+  localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
+  await loadBootstrap();
+  connectSocket();
+  if (statusMessage) {
+    lastEvent.value = statusMessage;
+  }
+}
+
 async function loadBootstrap() {
   const snapshot = await request(`/api/bootstrap?workspaceId=${workspaceId.value}`);
   applySnapshot(snapshot);
@@ -198,20 +230,28 @@ function connectSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token.value)}&workspaceId=${workspaceId.value}`;
   socketState.value = 'connecting';
-  socket = new WebSocket(wsUrl);
+  const nextSocket = new WebSocket(wsUrl);
+  socket = nextSocket;
 
-  socket.addEventListener('open', () => {
+  nextSocket.addEventListener('open', () => {
+    if (socket !== nextSocket) return;
     socketState.value = 'open';
   });
 
-  socket.addEventListener('close', () => {
+  nextSocket.addEventListener('close', () => {
+    const isCurrentSocket = socket === nextSocket;
+    if (isCurrentSocket) {
+      socket = undefined;
+    }
     socketState.value = 'closed';
+    if (!isCurrentSocket) return;
     if (allowReconnect) {
       reconnectTimer = window.setTimeout(connectSocket, 1500);
     }
   });
 
-  socket.addEventListener('message', (event) => {
+  nextSocket.addEventListener('message', (event) => {
+    if (socket !== nextSocket) return;
     const payload = JSON.parse(event.data);
     if (payload.type === 'snapshot') {
       applySnapshot(payload.data);
@@ -237,24 +277,13 @@ async function syncSessionAfterWorkspaceLoss(message) {
 
   try {
     const session = await request('/api/auth/session');
-    memberships.value = normalizeMemberships(session.workspaces || []);
     currentUser.value = session.user;
-
-    const fallbackWorkspaceId = session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0;
-    if (!fallbackWorkspaceId) {
-      workspaceId.value = 0;
-      localStorage.removeItem(WORKSPACE_KEY);
-      clearWorkspaceState();
-      errorMessage.value = message;
-      return;
-    }
-
-    workspaceId.value = Number(fallbackWorkspaceId);
-    revokedWorkspaceId.value = 0;
-    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
-    await loadBootstrap();
-    connectSocket();
-    errorMessage.value = message;
+    await applyWorkspaceMembershipUpdate({
+      workspaces: session.workspaces || [],
+      preferredWorkspaceId: session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0,
+      statusMessage: message
+    });
+    errorMessage.value = '';
   } catch (error) {
     errorMessage.value = error.message || message;
     clearSession();
@@ -343,10 +372,70 @@ function startAppleAuth() {
 
 async function switchWorkspace(nextWorkspaceId) {
   await withPending(async () => {
-    workspaceId.value = Number(nextWorkspaceId);
-    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
-    await loadBootstrap();
-    connectSocket();
+    await applyWorkspaceMembershipUpdate({
+      workspaces: memberships.value,
+      preferredWorkspaceId: Number(nextWorkspaceId)
+    });
+  });
+}
+
+async function createWorkspace(name) {
+  const workspaceName = String(name || '').trim();
+  if (!workspaceName) {
+    errorMessage.value = 'Workspace name is required.';
+    return;
+  }
+
+  await withPending(async () => {
+    const response = await request('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name: workspaceName })
+    });
+
+    await applyWorkspaceMembershipUpdate({
+      workspaces: response.workspaces || [],
+      preferredWorkspaceId: response.workspace?.id || response.defaultWorkspaceId || 0,
+      statusMessage: `${workspaceName} is ready.`
+    });
+    noWorkspaceName.value = '';
+  });
+}
+
+async function leaveWorkspace() {
+  const activeWorkspaceId = Number(workspaceId.value);
+  const activeWorkspaceName = workspace.value?.name || 'this workspace';
+  if (!activeWorkspaceId) return;
+
+  await withPending(async () => {
+    const response = await request(`/api/workspaces/${activeWorkspaceId}/leave`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+
+    await applyWorkspaceMembershipUpdate({
+      workspaces: response.workspaces || [],
+      preferredWorkspaceId: response.defaultWorkspaceId || 0,
+      statusMessage: `You left ${activeWorkspaceName}.`
+    });
+  });
+}
+
+async function deleteWorkspace() {
+  const activeWorkspaceId = Number(workspaceId.value);
+  const activeWorkspaceName = workspace.value?.name || 'this workspace';
+  if (!activeWorkspaceId) return;
+
+  await withPending(async () => {
+    const response = await request(`/api/workspaces/${activeWorkspaceId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({})
+    });
+
+    await applyWorkspaceMembershipUpdate({
+      workspaces: response.workspaces || [],
+      preferredWorkspaceId: response.defaultWorkspaceId || 0,
+      statusMessage: `${activeWorkspaceName} was deleted.`
+    });
   });
 }
 
@@ -585,23 +674,13 @@ async function restoreSession() {
 
   try {
     const session = await request('/api/auth/session');
-    memberships.value = normalizeMemberships(session.workspaces || []);
     currentUser.value = session.user;
 
     const preferredWorkspaceId = workspaceId.value && workspaceId.value !== revokedWorkspaceId.value ? workspaceId.value : 0;
-    const nextWorkspaceId = preferredWorkspaceId || session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0;
-    if (!nextWorkspaceId) {
-      localStorage.removeItem(WORKSPACE_KEY);
-      workspaceId.value = 0;
-      clearWorkspaceState();
-      return;
-    }
-
-    workspaceId.value = Number(nextWorkspaceId);
-    revokedWorkspaceId.value = 0;
-    localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
-    await loadBootstrap();
-    connectSocket();
+    await applyWorkspaceMembershipUpdate({
+      workspaces: session.workspaces || [],
+      preferredWorkspaceId: preferredWorkspaceId || session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0
+    });
   } catch (error) {
     errorMessage.value = error.message;
     clearSession();
@@ -666,6 +745,10 @@ onBeforeUnmount(() => {
           <p class="subtle">You are still signed in, but you no longer have an active workspace selected.</p>
           <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
         </div>
+        <form class="no-workspace-form" @submit.prevent="createWorkspace(noWorkspaceName)">
+          <input v-model="noWorkspaceName" type="text" placeholder="Create a new workspace" :disabled="pending" />
+          <button class="ghost-button" type="submit" :disabled="pending || !noWorkspaceName.trim()">Create workspace</button>
+        </form>
       </section>
 
       <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
@@ -675,11 +758,16 @@ onBeforeUnmount(() => {
           :current-list-id="activeListId || 0"
           :lists="lists"
           :memberships="memberships"
+          :role="currentMembership?.role || 'member'"
+          :workspace="workspace"
           :workspace-id="workspaceId || 0"
           :pending="pending"
           @select-list="activeListId = $event"
           @create-list="createList"
+          @create-workspace="createWorkspace"
           @delete-list="deleteList"
+          @delete-workspace="deleteWorkspace"
+          @leave-workspace="leaveWorkspace"
           @select-workspace="switchWorkspace"
         />
 
