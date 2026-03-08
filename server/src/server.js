@@ -832,13 +832,15 @@ app.delete('/api/invites/:id', requireAuth, requireWorkspace, async (req, res) =
 app.post('/api/invites/accept', requireAuth, async (req, res) => {
   try {
     const inviteToken = String(req.body.inviteToken || '').trim();
-    if (!inviteToken) {
-      res.status(400).json({ error: 'inviteToken is required.' });
+    const inviteId = Number(req.body.inviteId || 0);
+    if (!inviteToken && !inviteId) {
+      res.status(400).json({ error: 'inviteToken or inviteId is required.' });
       return;
     }
 
     const workspaceId = await acceptInviteForUser({
-      inviteToken,
+      inviteToken: inviteToken || null,
+      inviteId: inviteId || null,
       userId: req.auth.userId,
       email: req.auth.email
     });

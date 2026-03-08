@@ -433,14 +433,15 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
 }
 
 export async function getAuthSession(userId) {
-  const [userResult, workspaces] = await Promise.all([
+  const [userResult, workspaces, pendingInvites] = await Promise.all([
     pool.query(
       `SELECT id, name, email, created_at AS "createdAt"
        FROM users
        WHERE id = $1`,
       [userId]
     ),
-    getUserWorkspaces(userId)
+    getUserWorkspaces(userId),
+    getPendingInvitesForUser(userId)
   ]);
 
   if (!userResult.rowCount) {
@@ -452,6 +453,7 @@ export async function getAuthSession(userId) {
   return {
     user: userResult.rows[0],
     workspaces,
+    pendingInvites,
     defaultWorkspaceId: workspaces[0]?.id ?? null
   };
 }
@@ -781,6 +783,37 @@ export async function getWorkspaceInvites(workspaceId) {
      ORDER BY wi.created_at DESC`,
     [workspaceId]
   );
+  return result.rows;
+}
+
+export async function getPendingInvitesForUser(userId) {
+  const result = await pool.query(
+    `SELECT wi.id,
+            wi.email,
+            wi.role,
+            wi.created_at AS "createdAt",
+            wi.expires_at AS "expiresAt",
+            wi.workspace_id AS "workspaceId",
+            w.name AS "workspaceName",
+            w.slug AS "workspaceSlug",
+            inviter.name AS "invitedByName"
+     FROM workspace_invites wi
+     JOIN users invitee ON invitee.email = wi.email
+     JOIN workspaces w ON w.id = wi.workspace_id
+     LEFT JOIN users inviter ON inviter.id = wi.invited_by_user_id
+     WHERE invitee.id = $1
+       AND wi.accepted_at IS NULL
+       AND wi.expires_at > NOW()
+       AND NOT EXISTS (
+         SELECT 1
+         FROM workspace_members wm
+         WHERE wm.workspace_id = wi.workspace_id
+           AND wm.user_id = $1
+       )
+     ORDER BY wi.created_at DESC`,
+    [userId]
+  );
+
   return result.rows;
 }
 
@@ -1177,12 +1210,14 @@ export async function getInviteByToken(inviteToken) {
   return invite.rows[0] || null;
 }
 
-export async function acceptInviteForUser({ inviteToken, userId, email }) {
+export async function acceptInviteForUser({ inviteToken = null, inviteId = null, userId, email }) {
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
-    const invite = await getInviteRecordForUpdate(client, inviteToken);
+    const invite = inviteId
+      ? await getInviteRecordForUpdateById(client, inviteId)
+      : await getInviteRecordForUpdate(client, inviteToken);
 
     if (invite.email !== email.toLowerCase()) {
       const error = new Error('This invite was issued for a different email address.');
@@ -1230,6 +1265,46 @@ async function getInviteRecordForUpdate(client, inviteToken) {
      WHERE wi.token_hash = $1
      FOR UPDATE`,
     [hashInviteToken(inviteToken)]
+  );
+
+  const invite = result.rows[0];
+  if (!invite || invite.expiresAt <= new Date()) {
+    const error = new Error('Invite not found or expired.');
+    error.status = 404;
+    throw error;
+  }
+
+  const consumed = await client.query(
+    `SELECT accepted_at AS "acceptedAt"
+     FROM workspace_invites
+     WHERE id = $1`,
+    [invite.id]
+  );
+
+  if (consumed.rows[0]?.acceptedAt) {
+    const error = new Error('This invite has already been accepted.');
+    error.status = 409;
+    throw error;
+  }
+
+  return invite;
+}
+
+async function getInviteRecordForUpdateById(client, inviteId) {
+  const result = await client.query(
+    `SELECT wi.id,
+            wi.email,
+            wi.role,
+            wi.workspace_id AS "workspaceId",
+            wi.expires_at AS "expiresAt",
+            w.name AS "workspaceName",
+            w.slug AS "workspaceSlug",
+            w.created_at AS "workspaceCreatedAt"
+     FROM workspace_invites wi
+     JOIN workspaces w ON w.id = wi.workspace_id
+     WHERE wi.id = $1
+     FOR UPDATE`,
+    [inviteId]
   );
 
   const invite = result.rows[0];

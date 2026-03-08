@@ -30,6 +30,7 @@ const googleAuthEnabled = ref(false);
 const appleAuthEnabled = ref(false);
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
 const inviteDetails = ref(null);
+const pendingInvites = ref([]);
 const revokedWorkspaceId = ref(0);
 const noWorkspaceName = ref('');
 let socket;
@@ -64,6 +65,18 @@ const isAuthenticated = computed(() => Boolean(token.value));
 const hasWorkspace = computed(() => Boolean(workspaceId.value));
 const memberCount = computed(() => members.value.length);
 const ownerCount = computed(() => members.value.filter((member) => member.role === 'owner').length);
+const heroEyebrow = computed(() => {
+  if (inviteToken.value) return 'Workspace invitation';
+  if (!hasWorkspace.value && inviteDetails.value) return 'Pending invitation';
+  return 'Authenticated workspace';
+});
+const heroTitle = computed(() => {
+  if ((inviteToken.value || !hasWorkspace.value) && inviteDetails.value?.workspaceName) {
+    return inviteDetails.value.workspaceName;
+  }
+
+  return workspace.value?.name || inviteDetails.value?.workspaceName || 'Team workspace';
+});
 
 watch(
   theme,
@@ -133,6 +146,19 @@ function normalizeMemberships(items = []) {
   }));
 }
 
+function normalizePendingInvites(items = []) {
+  return items.map((invite) => ({
+    ...invite,
+    id: Number(invite.id),
+    workspaceId: Number(invite.workspaceId)
+  }));
+}
+
+function syncVisibleInvite() {
+  if (inviteToken.value) return;
+  inviteDetails.value = pendingInvites.value[0] || null;
+}
+
 function clearSession() {
   token.value = '';
   workspaceId.value = 0;
@@ -142,6 +168,8 @@ function clearSession() {
   members.value = [];
   invites.value = [];
   memberships.value = [];
+  pendingInvites.value = [];
+  syncVisibleInvite();
   currentUser.value = null;
   activeListId.value = null;
   localStorage.removeItem(TOKEN_KEY);
@@ -152,6 +180,7 @@ function clearSession() {
 function clearInviteState() {
   inviteToken.value = '';
   inviteDetails.value = null;
+  syncVisibleInvite();
   const url = new URL(window.location.href);
   url.searchParams.delete('invite');
   window.history.replaceState({}, '', url);
@@ -305,6 +334,8 @@ async function syncSessionAfterWorkspaceLoss(message) {
   try {
     const session = await request('/api/auth/session');
     currentUser.value = session.user;
+    pendingInvites.value = normalizePendingInvites(session.pendingInvites || []);
+    syncVisibleInvite();
     await applyWorkspaceMembershipUpdate({
       workspaces: session.workspaces || [],
       preferredWorkspaceId: session.defaultWorkspaceId || session.workspaces?.[0]?.id || 0,
@@ -360,12 +391,7 @@ async function handleAuth(payload) {
 
     const nextWorkspaceId = response.defaultWorkspaceId || response.workspaces?.[0]?.id;
     persistSession(response.token, nextWorkspaceId);
-    memberships.value = normalizeMemberships(response.workspaces || []);
-    currentUser.value = response.user;
-    if (nextWorkspaceId) {
-      await loadBootstrap();
-      connectSocket();
-    }
+    await restoreSession();
   }).finally(() => {
     if (errorMessage.value) {
       authErrorMode.value = payload.mode;
@@ -631,7 +657,10 @@ async function removeMember(member, onCompleted) {
 }
 
 async function loadInvite() {
-  if (!inviteToken.value) return;
+  if (!inviteToken.value) {
+    syncVisibleInvite();
+    return;
+  }
 
   try {
     const response = await request(`/api/invites/${inviteToken.value}`, { headers: {} });
@@ -678,32 +707,35 @@ function handleOAuthRedirectResult() {
 }
 
 async function acceptInvite() {
-  if (!inviteToken.value || !token.value) return;
+  if (!token.value || (!inviteToken.value && !inviteDetails.value?.id)) return;
 
   try {
     await withPending(async () => {
+      const acceptedInviteId = inviteDetails.value?.id || null;
       const response = await request('/api/invites/accept', {
         method: 'POST',
-        body: JSON.stringify({ inviteToken: inviteToken.value })
+        body: JSON.stringify({
+          inviteToken: inviteToken.value || null,
+          inviteId: inviteToken.value ? null : acceptedInviteId
+        })
       });
 
+      if (acceptedInviteId) {
+        pendingInvites.value = pendingInvites.value.filter((invite) => invite.id !== acceptedInviteId);
+      }
+      clearInviteState();
       workspaceId.value = Number(response.workspaceId);
       localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
-      await loadBootstrap();
-      connectSocket();
-      clearInviteState();
+      await restoreSession();
     });
   } finally {
     if (inviteDetails.value && isResolvedInviteError(errorMessage.value)) {
-      clearInviteState();
-
-      if (!workspaceId.value && memberships.value.length) {
-        workspaceId.value = Number(memberships.value[0].id);
-        localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
-        await loadBootstrap();
-        connectSocket();
+      const resolvedInviteId = inviteDetails.value.id || null;
+      if (resolvedInviteId) {
+        pendingInvites.value = pendingInvites.value.filter((invite) => invite.id !== resolvedInviteId);
       }
-
+      clearInviteState();
+      await restoreSession();
       errorMessage.value = '';
     }
   }
@@ -715,6 +747,8 @@ async function restoreSession() {
   try {
     const session = await request('/api/auth/session');
     currentUser.value = session.user;
+    pendingInvites.value = normalizePendingInvites(session.pendingInvites || []);
+    syncVisibleInvite();
 
     const preferredWorkspaceId = workspaceId.value && workspaceId.value !== revokedWorkspaceId.value ? workspaceId.value : 0;
     await applyWorkspaceMembershipUpdate({
@@ -783,8 +817,8 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="hero-bar panel">
         <div>
-          <p class="eyebrow">{{ inviteDetails ? 'Workspace invitation' : 'Authenticated workspace' }}</p>
-          <h1>{{ inviteDetails?.workspaceName || workspace?.name || 'Team workspace' }}</h1>
+          <p class="eyebrow">{{ heroEyebrow }}</p>
+          <h1>{{ heroTitle }}</h1>
         </div>
         <div class="hero-meta">
           <span>{{ currentUser?.name || 'Unknown user' }}</span>
