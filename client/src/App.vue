@@ -802,8 +802,8 @@ onBeforeUnmount(() => {
         <button class="ghost-button" :disabled="pending" @click="acceptInvite">Accept invite</button>
       </section>
 
-      <section v-else-if="!hasWorkspace" class="panel invite-accept-panel">
-        <div>
+      <section v-else-if="!hasWorkspace" class="panel invite-accept-panel no-workspace-panel">
+        <div class="no-workspace-copy">
           <p class="eyebrow">No workspace selected</p>
           <h2>Your workspace access changed</h2>
           <p class="subtle">You are still signed in, but you no longer have an active workspace selected.</p>
