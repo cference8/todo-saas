@@ -327,6 +327,10 @@ textarea::placeholder {
   margin: 0;
 }
 
+.hero-bar + .invite-accept-panel {
+  margin-top: 1rem;
+}
+
 .hero-meta {
   display: flex;
   align-items: center;

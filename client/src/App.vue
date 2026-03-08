@@ -9,6 +9,10 @@ import WorkspaceSidebar from './components/WorkspaceSidebar.vue';
 const TOKEN_KEY = 'todo-saas-token';
 const WORKSPACE_KEY = 'todo-saas-workspace-id';
 const THEME_KEY = 'todo-saas-theme';
+const DEFAULT_LAST_EVENT = 'Sign in to load your workspace';
+const NO_WORKSPACE_LAST_EVENT = 'Create or join a workspace to keep going.';
+const INVITE_READY_LAST_EVENT = 'Invitation ready to review.';
+const WORKSPACE_LOADING_LAST_EVENT = 'Loading your workspace...';
 
 const token = ref(localStorage.getItem(TOKEN_KEY) || '');
 const workspaceId = ref(Number(localStorage.getItem(WORKSPACE_KEY)) || 0);
@@ -23,7 +27,7 @@ const activeListId = ref(null);
 const currentUser = ref(null);
 const pending = ref(false);
 const socketState = ref('closed');
-const lastEvent = ref('Sign in to load your workspace');
+const lastEvent = ref(DEFAULT_LAST_EVENT);
 const errorMessage = ref('');
 const authErrorMode = ref('');
 const googleAuthEnabled = ref(false);
@@ -76,6 +80,16 @@ const heroTitle = computed(() => {
   }
 
   return workspace.value?.name || inviteDetails.value?.workspaceName || 'Team workspace';
+});
+const heroStatus = computed(() => {
+  if (lastEvent.value && lastEvent.value !== DEFAULT_LAST_EVENT) {
+    return lastEvent.value;
+  }
+
+  if (!isAuthenticated.value) return DEFAULT_LAST_EVENT;
+  if (inviteDetails.value) return INVITE_READY_LAST_EVENT;
+  if (!hasWorkspace.value) return NO_WORKSPACE_LAST_EVENT;
+  return WORKSPACE_LOADING_LAST_EVENT;
 });
 
 watch(
@@ -172,6 +186,7 @@ function clearSession() {
   syncVisibleInvite();
   currentUser.value = null;
   activeListId.value = null;
+  lastEvent.value = DEFAULT_LAST_EVENT;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(WORKSPACE_KEY);
   disconnectSocket();
@@ -237,9 +252,7 @@ async function applyWorkspaceMembershipUpdate({ workspaces = [], preferredWorksp
     revokedWorkspaceId.value = 0;
     localStorage.removeItem(WORKSPACE_KEY);
     clearWorkspaceState();
-    if (statusMessage) {
-      lastEvent.value = statusMessage;
-    }
+    lastEvent.value = statusMessage || NO_WORKSPACE_LAST_EVENT;
     return;
   }
 
@@ -822,7 +835,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="hero-meta">
           <span>{{ currentUser?.name || 'Unknown user' }}</span>
-          <span>{{ lastEvent }}</span>
+          <span>{{ heroStatus }}</span>
           <button
             v-if="!hasWorkspace"
             type="button"
