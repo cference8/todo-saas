@@ -1,14 +1,20 @@
 <script setup>
 import { computed, reactive, ref } from 'vue';
 
+const EMAIL_PREVIEW_LIMIT = 17;
+
 const props = defineProps({
-  currentListId: {
-    type: Number,
-    required: true
+  currentUser: {
+    type: Object,
+    default: null
   },
-  lists: {
+  members: {
     type: Array,
-    required: true
+    default: () => []
+  },
+  invites: {
+    type: Array,
+    default: () => []
   },
   memberships: {
     type: Array,
@@ -41,40 +47,40 @@ const props = defineProps({
 });
 
 const emit = defineEmits([
-  'select-list',
-  'create-list',
-  'delete-list',
   'select-workspace',
   'create-workspace',
   'leave-workspace',
-  'delete-workspace'
+  'delete-workspace',
+  'create-invite',
+  'copy-invite-link',
+  'resend-invite',
+  'cancel-invite',
+  'remove-member',
+  'promote-member',
+  'logout'
 ]);
-const modalMode = ref('');
-const createForm = reactive({
-  name: '',
-  type: 'task'
-});
+
 const workspaceForm = reactive({
   name: ''
 });
-const deleteTarget = ref(null);
+const inviteEmail = ref('');
+const lastInviteUrl = ref('');
+const lastInviteNotice = ref('');
+const lastInviteNoticeTone = ref('muted');
+const activeInviteId = ref(null);
+const activeMemberId = ref(null);
+const modalMode = ref('');
 const modalError = ref('');
+
+const currentWorkspaceName = computed(() => (
+  props.workspace?.name
+  || props.memberships.find((membership) => Number(membership.id) === Number(props.workspaceId))?.name
+  || 'Workspace'
+));
 const canDeleteWorkspace = computed(() => props.role === 'owner' && props.memberCount <= 1);
 const canLeaveWorkspace = computed(() => props.role === 'member' || (props.role === 'owner' && props.memberCount > 1));
 const ownerMustTransfer = computed(() => props.role === 'owner' && props.memberCount > 1 && props.ownerCount < 2);
-
-function handleCreateList() {
-  modalMode.value = 'create';
-  createForm.name = '';
-  createForm.type = 'task';
-  modalError.value = '';
-}
-
-function handleDeleteList(list) {
-  deleteTarget.value = list;
-  modalMode.value = 'delete';
-  modalError.value = '';
-}
+const canInvite = computed(() => props.role === 'owner');
 
 function handleCreateWorkspace() {
   modalMode.value = 'create-workspace';
@@ -94,24 +100,7 @@ function handleDeleteWorkspace() {
 
 function closeModal() {
   modalMode.value = '';
-  deleteTarget.value = null;
   modalError.value = '';
-}
-
-function submitCreateList() {
-  if (!createForm.name.trim()) {
-    modalError.value = 'List name is required.';
-    return;
-  }
-
-  emit('create-list', { name: createForm.name.trim(), type: createForm.type });
-  closeModal();
-}
-
-function confirmDeleteList() {
-  if (!deleteTarget.value) return;
-  emit('delete-list', deleteTarget.value.id);
-  closeModal();
 }
 
 function submitCreateWorkspace() {
@@ -133,99 +122,262 @@ function confirmDeleteWorkspace() {
   emit('delete-workspace');
   closeModal();
 }
+
+function applyInviteResult(result = {}) {
+  lastInviteUrl.value = result.invite?.inviteUrl || '';
+  lastInviteNotice.value = result.notice || result.invite?.emailDelivery?.message || 'Invite link ready.';
+  lastInviteNoticeTone.value = result.tone || (result.invite?.emailDelivery?.ok ? 'success' : 'warning');
+}
+
+function submitInvite() {
+  if (!inviteEmail.value.trim()) return;
+  emit('create-invite', inviteEmail.value.trim(), (invite) => {
+    applyInviteResult({ invite });
+  });
+  inviteEmail.value = '';
+}
+
+async function copyLatestInvite() {
+  if (!lastInviteUrl.value) return;
+  await navigator.clipboard.writeText(lastInviteUrl.value);
+}
+
+function toggleInviteActions(inviteId) {
+  activeInviteId.value = activeInviteId.value === inviteId ? null : inviteId;
+}
+
+function toggleMemberActions(memberId) {
+  activeMemberId.value = activeMemberId.value === memberId ? null : memberId;
+}
+
+function copyInviteLink(invite) {
+  emit('copy-invite-link', invite, async (result) => {
+    applyInviteResult(result);
+    if (result?.invite?.inviteUrl) {
+      await navigator.clipboard.writeText(result.invite.inviteUrl);
+    }
+    activeInviteId.value = null;
+  });
+}
+
+function resendInvite(invite) {
+  emit('resend-invite', invite, (result) => {
+    applyInviteResult(result);
+    activeInviteId.value = null;
+  });
+}
+
+function cancelInvite(invite) {
+  const confirmed = window.confirm(`Cancel the invite for ${invite.email}?`);
+  if (!confirmed) return;
+
+  emit('cancel-invite', invite, () => {
+    lastInviteNotice.value = `Invite canceled for ${invite.email}.`;
+    lastInviteNoticeTone.value = 'warning';
+    activeInviteId.value = null;
+  });
+}
+
+function canRemoveMember(member) {
+  return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
+}
+
+function canPromoteMember(member) {
+  return canInvite.value && member.id !== props.currentUser?.id && member.role !== 'owner';
+}
+
+function canManageMember(member) {
+  return canRemoveMember(member) || canPromoteMember(member);
+}
+
+function promoteMember(member) {
+  const confirmed = window.confirm(`Promote ${member.name} to owner?`);
+  if (!confirmed) return;
+
+  emit('promote-member', member, () => {
+    lastInviteNotice.value = `${member.name} is now an owner.`;
+    lastInviteNoticeTone.value = 'success';
+    activeMemberId.value = null;
+  });
+}
+
+function removeMember(member) {
+  const confirmed = window.confirm(`Remove ${member.name} from this workspace?`);
+  if (!confirmed) return;
+
+  emit('remove-member', member, () => {
+    lastInviteNotice.value = `${member.name} was removed from the workspace.`;
+    lastInviteNoticeTone.value = 'warning';
+    activeMemberId.value = null;
+  });
+}
+
+function formatEmailPreview(email) {
+  const value = String(email || '');
+  return value.length > EMAIL_PREVIEW_LIMIT ? `${value.slice(0, EMAIL_PREVIEW_LIMIT)}...` : value;
+}
 </script>
 
 <template>
-  <aside class="panel sidebar-panel">
+  <aside class="panel sidebar-panel workspace-panel">
     <div class="sidebar-header">
       <div>
         <p class="eyebrow">Workspace</p>
-        <h1>Todo Control</h1>
+        <h1>{{ currentWorkspaceName }}</h1>
+        <p class="subtle">{{ memberCount }} members • {{ role }}</p>
       </div>
-      <button class="ghost-button" :disabled="pending" @click="handleCreateList">New list</button>
+      <button class="ghost-danger" :disabled="pending" @click="emit('logout')">Logout</button>
     </div>
 
-    <label class="workspace-switcher-label" for="workspace-switcher">Workspace</label>
-    <select
-      id="workspace-switcher"
-      class="workspace-switcher"
-      :value="workspaceId"
-      @change="emit('select-workspace', Number($event.target.value))"
-    >
-      <option v-for="workspace in memberships" :key="workspace.id" :value="workspace.id">
-        {{ workspace.name }} • {{ workspace.role }}
-      </option>
-    </select>
+    <div class="panel-scroll">
+      <section class="workspace-section">
+        <label class="workspace-switcher-label" for="workspace-switcher">Switch workspace</label>
+        <select
+          id="workspace-switcher"
+          class="workspace-switcher"
+          :value="workspaceId"
+          @change="emit('select-workspace', Number($event.target.value))"
+        >
+          <option v-for="workspaceOption in memberships" :key="workspaceOption.id" :value="workspaceOption.id">
+            {{ workspaceOption.name }} • {{ workspaceOption.role }}
+          </option>
+        </select>
 
-    <div class="workspace-actions">
-      <button class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
-      <button v-if="canLeaveWorkspace" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
-        Leave workspace
-      </button>
-      <button v-else-if="canDeleteWorkspace" class="ghost-danger" :disabled="pending" @click="handleDeleteWorkspace">
-        Delete workspace
-      </button>
-    </div>
+        <div class="workspace-actions">
+          <button class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
+          <button v-if="canLeaveWorkspace" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
+            Leave workspace
+          </button>
+          <button v-else-if="canDeleteWorkspace" class="ghost-danger" :disabled="pending" @click="handleDeleteWorkspace">
+            Delete workspace
+          </button>
+        </div>
+      </section>
 
-    <div class="sidebar-list">
-      <article
-        v-for="list in lists"
-        :key="list.id"
-        class="list-card"
-        :class="{ active: list.id === currentListId }"
-      >
-        <button class="list-card-main" @click="emit('select-list', list.id)">
-          <span>
-            <strong>{{ list.name }}</strong>
-            <small>{{ list.taskCount }} {{ list.type === 'grocery' ? 'items' : 'tasks' }}</small>
-          </span>
-        </button>
-        <span class="list-card-actions">
-          <small class="list-type-chip">{{ list.type }}</small>
-          <small>{{ list.openCount }} open</small>
-          <button class="icon-button" title="Delete list" @click.stop="handleDeleteList(list)">×</button>
-        </span>
-      </article>
+      <section class="workspace-section workspace-account-card">
+        <p class="eyebrow">Account</p>
+        <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
+        <small class="subtle">{{ currentUser?.email }}</small>
+      </section>
+
+      <section class="workspace-section">
+        <div class="workspace-section-header">
+          <div>
+            <p class="eyebrow">Members</p>
+            <h2>People in this workspace</h2>
+          </div>
+          <small class="subtle">{{ memberCount }} total</small>
+        </div>
+
+        <div class="member-list">
+          <div
+            v-for="member in members"
+            :key="member.id"
+            class="member-row"
+            :class="{ active: activeMemberId === member.id }"
+          >
+            <button
+              v-if="canManageMember(member)"
+              type="button"
+              class="member-summary"
+              :disabled="pending"
+              @click="toggleMemberActions(member.id)"
+            >
+              <strong>{{ member.name }}</strong>
+              <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
+            </button>
+            <span v-else>
+              <strong>{{ member.name }}</strong>
+              <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
+            </span>
+            <small class="member-role">{{ member.role }}</small>
+            <div v-if="activeMemberId === member.id" class="member-actions">
+              <button
+                v-if="canPromoteMember(member)"
+                type="button"
+                class="ghost-button muted-button"
+                :disabled="pending"
+                @click="promoteMember(member)"
+              >
+                Make owner
+              </button>
+              <button
+                v-if="canRemoveMember(member)"
+                type="button"
+                class="ghost-danger"
+                :disabled="pending"
+                @click="removeMember(member)"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="canInvite" class="workspace-section">
+        <div class="workspace-section-header">
+          <div>
+            <p class="eyebrow">Invite</p>
+            <h2>Add a teammate</h2>
+          </div>
+        </div>
+
+        <form class="invite-form" @submit.prevent="submitInvite">
+          <input v-model="inviteEmail" type="email" placeholder="Invite teammate by email" :disabled="pending" />
+          <button type="submit" :disabled="pending || !inviteEmail.trim()">Create invite</button>
+        </form>
+      </section>
+
+      <section v-if="lastInviteUrl" class="workspace-section">
+        <div class="invite-link-card">
+          <p class="subtle">Latest invite link</p>
+          <input :value="lastInviteUrl" readonly />
+          <p class="invite-feedback" :class="lastInviteNoticeTone">{{ lastInviteNotice }}</p>
+          <button class="ghost-button muted-button" :disabled="pending" @click="copyLatestInvite">Copy link</button>
+        </div>
+      </section>
+
+      <section v-if="invites.length" class="workspace-section">
+        <div class="workspace-section-header">
+          <div>
+            <p class="eyebrow">Invites</p>
+            <h2>Pending invitations</h2>
+          </div>
+          <small class="subtle">{{ invites.length }} open</small>
+        </div>
+
+        <div class="invite-list">
+          <div
+            v-for="invite in invites"
+            :key="invite.id"
+            class="invite-row"
+            :class="{ active: activeInviteId === invite.id }"
+          >
+            <div class="invite-row-header">
+              <button type="button" class="invite-summary" :disabled="pending" @click="toggleInviteActions(invite.id)">
+                <strong class="invite-email">{{ invite.email }}</strong>
+              </button>
+              <small class="member-role invite-role">{{ invite.role }}</small>
+            </div>
+            <div class="invite-row-meta">
+              <span class="invite-status">Pending invite</span>
+              <span>Expires {{ new Date(invite.expiresAt).toLocaleString() }}</span>
+            </div>
+            <div v-if="activeInviteId === invite.id" class="invite-actions">
+              <button type="button" class="ghost-button muted-button" :disabled="pending" @click="copyInviteLink(invite)">Copy link</button>
+              <button type="button" class="ghost-button muted-button" :disabled="pending" @click="resendInvite(invite)">Resend</button>
+              <button type="button" class="ghost-danger" :disabled="pending" @click="cancelInvite(invite)">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </aside>
 
   <div v-if="modalMode" class="modal-backdrop" @click.self="closeModal">
     <section class="panel action-modal">
-      <template v-if="modalMode === 'create'">
-        <div>
-          <p class="eyebrow">New list</p>
-          <h2>Create a list</h2>
-          <p class="subtle">Choose the list name and type. Grocery lists use quantity instead of task priority and due date.</p>
-        </div>
-
-        <div class="modal-form">
-          <input v-model="createForm.name" type="text" placeholder="List name" :disabled="pending" />
-          <div class="type-radio-group">
-            <label class="type-radio">
-              <input v-model="createForm.type" type="radio" value="task" :disabled="pending" />
-              <span>
-                <strong>Task list</strong>
-                <small>Use due dates and priority.</small>
-              </span>
-            </label>
-            <label class="type-radio">
-              <input v-model="createForm.type" type="radio" value="grocery" :disabled="pending" />
-              <span>
-                <strong>Grocery list</strong>
-                <small>Use quantity and shopping notes.</small>
-              </span>
-            </label>
-          </div>
-          <p v-if="modalError" class="form-error">{{ modalError }}</p>
-        </div>
-
-        <div class="modal-actions">
-          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
-          <button class="ghost-button" type="button" :disabled="pending" @click="submitCreateList">Create list</button>
-        </div>
-      </template>
-
-      <template v-else-if="modalMode === 'create-workspace'">
+      <template v-if="modalMode === 'create-workspace'">
         <div>
           <p class="eyebrow">New workspace</p>
           <h2>Create another workspace</h2>
@@ -246,9 +398,9 @@ function confirmDeleteWorkspace() {
       <template v-else-if="modalMode === 'leave-workspace'">
         <div>
           <p class="eyebrow">Leave workspace</p>
-          <h2>Leave {{ workspace?.name || 'this workspace' }}?</h2>
+          <h2>Leave {{ currentWorkspaceName }}?</h2>
           <p v-if="ownerMustTransfer" class="subtle">
-            Promote another member to owner in the session panel before leaving. Shared workspaces must keep an owner.
+            Promote another member in this workspace before leaving. Shared workspaces must keep an owner.
           </p>
           <p v-else class="subtle">
             You will lose access immediately. You can only rejoin if an owner invites you again.
@@ -266,26 +418,13 @@ function confirmDeleteWorkspace() {
       <template v-else-if="modalMode === 'delete-workspace'">
         <div>
           <p class="eyebrow">Delete workspace</p>
-          <h2>Delete {{ workspace?.name || 'this workspace' }}?</h2>
+          <h2>Delete {{ currentWorkspaceName }}?</h2>
           <p class="subtle">This permanently removes all lists, tasks, invites, and member access for this workspace.</p>
         </div>
 
         <div class="modal-actions">
           <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
           <button class="ghost-danger" type="button" :disabled="pending" @click="confirmDeleteWorkspace">Delete workspace</button>
-        </div>
-      </template>
-
-      <template v-else-if="modalMode === 'delete'">
-        <div>
-          <p class="eyebrow">Delete list</p>
-          <h2>Delete {{ deleteTarget?.name }}?</h2>
-          <p class="subtle">This removes the list and all of its items.</p>
-        </div>
-
-        <div class="modal-actions">
-          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
-          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmDeleteList">Delete list</button>
         </div>
       </template>
     </section>

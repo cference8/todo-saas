@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthPanel from './components/AuthPanel.vue';
 import GroceryPanel from './components/GroceryPanel.vue';
-import MemberPanel from './components/MemberPanel.vue';
+import ListSidebar from './components/ListSidebar.vue';
 import TaskPanel from './components/TaskPanel.vue';
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue';
 
@@ -856,8 +856,9 @@ onBeforeUnmount(() => {
 
       <section v-if="hasWorkspace" class="layout-grid three-up">
         <WorkspaceSidebar
-          :current-list-id="activeListId || 0"
-          :lists="lists"
+          :current-user="currentUser"
+          :invites="invites"
+          :members="members"
           :memberships="memberships"
           :member-count="memberCount"
           :owner-count="ownerCount"
@@ -865,13 +866,17 @@ onBeforeUnmount(() => {
           :workspace="workspace"
           :workspace-id="workspaceId || 0"
           :pending="pending"
-          @select-list="activeListId = $event"
-          @create-list="createList"
+          @cancel-invite="cancelInvite"
+          @copy-invite-link="copyInviteLink"
           @create-workspace="createWorkspace"
-          @delete-list="deleteList"
           @delete-workspace="deleteWorkspace"
           @leave-workspace="leaveWorkspace"
+          @logout="clearSession"
+          @promote-member="promoteMember"
+          @remove-member="removeMember"
+          @resend-invite="resendInvite"
           @select-workspace="switchWorkspace"
+          @create-invite="createInvite"
         />
 
         <TaskPanel
@@ -898,19 +903,13 @@ onBeforeUnmount(() => {
           @delete-task="deleteTask"
         />
 
-        <MemberPanel
-          :current-user="currentUser"
-          :invites="invites"
-          :members="members"
-          :role="currentMembership?.role || 'member'"
+        <ListSidebar
+          :current-list-id="activeListId || 0"
+          :lists="lists"
           :pending="pending"
-          @cancel-invite="cancelInvite"
-          @copy-invite-link="copyInviteLink"
-          @create-invite="createInvite"
-          @logout="clearSession"
-          @promote-member="promoteMember"
-          @remove-member="removeMember"
-          @resend-invite="resendInvite"
+          @create-list="createList"
+          @delete-list="deleteList"
+          @select-list="activeListId = $event"
         />
       </section>
     </template>
