@@ -244,6 +244,14 @@ Before sending from Resend, verify the sending domain or sender address in your 
 - https://resend.com/docs/api-reference/emails/send-email
 - https://resend.com/docs/dashboard/domains/introduction
 
+Deliverability notes:
+
+- `INVITE_FROM_EMAIL` must use the exact domain or subdomain you verified in Resend.
+- Publish SPF, DKIM, and a DMARC record for that sender domain. A monitoring-only DMARC policy such as `p=none` is a starting point, but it is weaker than a fully enforced policy once you have validated delivery.
+- Prefer a dedicated transactional sender identity for invites instead of a personal mailbox or a mixed-use marketing domain.
+- New domains and low-volume domains usually need time to build reputation, so inbox placement may improve only after a warm-up period.
+- Keep the invite email clearly transactional: one purpose, one primary action, and links that point back to your app domain.
+
 ## Next logical upgrades
 
 - Role management beyond `owner` and `member`

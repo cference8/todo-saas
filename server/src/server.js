@@ -70,7 +70,7 @@ function buildInviteUrl(req, inviteToken) {
 
 async function deliverInviteEmail({ req, invite }) {
   const inviteUrl = buildInviteUrl(req, invite.token);
-  const inviterLabel = req.auth.email || 'A teammate';
+  const inviterLabel = invite.invitedByName || req.auth.email || 'A teammate';
 
   let emailDelivery;
   try {

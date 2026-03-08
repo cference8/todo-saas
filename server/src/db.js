@@ -1121,7 +1121,7 @@ export async function createWorkspaceInvite({ workspaceId, userId, email, role =
   const token = issueInviteToken();
   const tokenHash = hashInviteToken(token);
 
-  const [membershipResult, workspaceResult] = await Promise.all([
+  const [membershipResult, workspaceResult, inviterResult] = await Promise.all([
     pool.query(
       `SELECT 1
        FROM workspace_members wm
@@ -1134,6 +1134,12 @@ export async function createWorkspaceInvite({ workspaceId, userId, email, role =
        FROM workspaces
        WHERE id = $1`,
       [workspaceId]
+    ),
+    pool.query(
+      `SELECT name, email
+       FROM users
+       WHERE id = $1`,
+      [userId]
     )
   ]);
 
@@ -1152,6 +1158,8 @@ export async function createWorkspaceInvite({ workspaceId, userId, email, role =
 
   return {
     ...result.rows[0],
+    invitedByName: inviterResult.rows[0]?.name || '',
+    invitedByEmail: inviterResult.rows[0]?.email || '',
     workspace: workspaceResult.rows[0],
     token
   };
@@ -1177,12 +1185,20 @@ export async function resendWorkspaceInvite({ workspaceId, inviteId, userId }) {
   try {
     await client.query('BEGIN');
 
-    const workspaceResult = await client.query(
-      `SELECT id, name, slug
-       FROM workspaces
-       WHERE id = $1`,
-      [workspaceId]
-    );
+    const [workspaceResult, inviterResult] = await Promise.all([
+      client.query(
+        `SELECT id, name, slug
+         FROM workspaces
+         WHERE id = $1`,
+        [workspaceId]
+      ),
+      client.query(
+        `SELECT name, email
+         FROM users
+         WHERE id = $1`,
+        [userId]
+      )
+    ]);
     if (!workspaceResult.rowCount) {
       const error = new Error('Workspace not found.');
       error.status = 404;
@@ -1235,6 +1251,8 @@ export async function resendWorkspaceInvite({ workspaceId, inviteId, userId }) {
 
     return {
       ...result.rows[0],
+      invitedByName: inviterResult.rows[0]?.name || '',
+      invitedByEmail: inviterResult.rows[0]?.email || '',
       workspace: workspaceResult.rows[0],
       token
     };
