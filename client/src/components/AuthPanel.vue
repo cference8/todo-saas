@@ -14,6 +14,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  theme: {
+    type: String,
+    default: 'light'
+  },
   errorMessage: {
     type: String,
     default: ''
@@ -41,8 +45,8 @@ const form = reactive({
 const errorMode = ref('');
 const googleButtonAsset = computed(() => (
   mode.value === 'register'
-    ? '/google-imgs/svg/light/web_light_rd_SU.svg'
-    : '/google-imgs/svg/light/web_light_rd_SI.svg'
+    ? `/google-imgs/svg/${props.theme}/web_${props.theme}_rd_SU.svg`
+    : `/google-imgs/svg/${props.theme}/web_${props.theme}_rd_SI.svg`
 ));
 const googleButtonLabel = computed(() => (mode.value === 'register' ? 'Sign up with Google' : 'Sign in with Google'));
 

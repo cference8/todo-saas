@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AuthPanel from './components/AuthPanel.vue';
 import GroceryPanel from './components/GroceryPanel.vue';
 import MemberPanel from './components/MemberPanel.vue';
@@ -8,9 +8,11 @@ import WorkspaceSidebar from './components/WorkspaceSidebar.vue';
 
 const TOKEN_KEY = 'todo-saas-token';
 const WORKSPACE_KEY = 'todo-saas-workspace-id';
+const THEME_KEY = 'todo-saas-theme';
 
 const token = ref(localStorage.getItem(TOKEN_KEY) || '');
 const workspaceId = ref(Number(localStorage.getItem(WORKSPACE_KEY)) || 0);
+const theme = ref(resolveInitialTheme());
 const workspace = ref(null);
 const lists = ref([]);
 const tasks = ref([]);
@@ -62,6 +64,29 @@ const isAuthenticated = computed(() => Boolean(token.value));
 const hasWorkspace = computed(() => Boolean(workspaceId.value));
 const memberCount = computed(() => members.value.length);
 const ownerCount = computed(() => members.value.filter((member) => member.role === 'owner').length);
+
+watch(
+  theme,
+  (nextTheme) => {
+    localStorage.setItem(THEME_KEY, nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+  },
+  { immediate: true }
+);
+
+function resolveInitialTheme() {
+  const storedTheme = localStorage.getItem(THEME_KEY);
+  if (storedTheme === 'light' || storedTheme === 'dark') {
+    return storedTheme;
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function setTheme(nextTheme) {
+  if (nextTheme !== 'light' && nextTheme !== 'dark') return;
+  theme.value = nextTheme;
+}
 
 async function request(path, options = {}) {
   const headers = {
@@ -717,6 +742,29 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="app-shell">
+    <header class="app-topbar">
+      <div class="theme-switch" role="group" aria-label="Color theme">
+        <button
+          type="button"
+          class="theme-button"
+          :class="{ active: theme === 'light' }"
+          :aria-pressed="theme === 'light'"
+          @click="setTheme('light')"
+        >
+          Light
+        </button>
+        <button
+          type="button"
+          class="theme-button"
+          :class="{ active: theme === 'dark' }"
+          :aria-pressed="theme === 'dark'"
+          @click="setTheme('dark')"
+        >
+          Dark
+        </button>
+      </div>
+    </header>
+
     <template v-if="!isAuthenticated">
       <AuthPanel
         :invite="inviteDetails"
@@ -725,6 +773,7 @@ onBeforeUnmount(() => {
         :error-message="errorMessage"
         :error-for-mode="authErrorMode"
         :pending="pending"
+        :theme="theme"
         @apple="startAppleAuth"
         @google="startGoogleAuth"
         @submit="handleAuth"
