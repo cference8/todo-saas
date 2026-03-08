@@ -1,7 +1,9 @@
 <script setup>
-import { computed, nextTick, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue';
 
 const EMAIL_PREVIEW_LIMIT = 17;
+const ACTION_FEEDBACK_DURATION_MS = 5000;
+const INVITE_FORM_ERROR_DURATION_MS = 6000;
 
 const props = defineProps({
   currentUser: {
@@ -65,16 +67,23 @@ const workspaceForm = reactive({
   name: ''
 });
 const inviteEmail = ref('');
+const inviteFormError = ref('');
 const lastInviteUrl = ref('');
 const lastInviteNotice = ref('');
 const lastInviteNoticeTone = ref('muted');
 const activeInviteId = ref(null);
 const activeMemberId = ref(null);
 const promoteMemberTarget = ref(null);
+const removeMemberTarget = ref(null);
 const cancelInviteTarget = ref(null);
 const latestInviteLinkCardRef = ref(null);
+const latestInviteCopied = ref(false);
 const modalMode = ref('');
 const modalError = ref('');
+const inviteActionFeedback = reactive({});
+const inviteActionTimers = new Map();
+let latestInviteCopyTimer = null;
+let inviteFormErrorTimer = null;
 
 const currentWorkspaceName = computed(() => (
   props.workspace?.name
@@ -119,6 +128,7 @@ function closeModal() {
   modalMode.value = '';
   modalError.value = '';
   promoteMemberTarget.value = null;
+  removeMemberTarget.value = null;
   cancelInviteTarget.value = null;
 }
 
@@ -159,6 +169,7 @@ function confirmDeleteWorkspace() {
 }
 
 function applyInviteResult(result = {}) {
+  clearInviteFormError();
   lastInviteUrl.value = result.invite?.inviteUrl || '';
   lastInviteNotice.value = result.notice || result.invite?.emailDelivery?.message || 'Invite link ready.';
   lastInviteNoticeTone.value = result.tone || (result.invite?.emailDelivery?.ok ? 'success' : 'warning');
@@ -169,16 +180,22 @@ function applyInviteResult(result = {}) {
 }
 
 function submitInvite() {
-  if (!inviteEmail.value.trim()) return;
-  emit('create-invite', inviteEmail.value.trim(), (invite) => {
+  const nextEmail = inviteEmail.value.trim();
+  if (!nextEmail) return;
+
+  clearInviteFormError();
+  emit('create-invite', nextEmail, (invite) => {
     applyInviteResult({ invite });
+    inviteEmail.value = '';
+  }, (message) => {
+    setInviteFormError(message || 'Could not send invite.');
   });
-  inviteEmail.value = '';
 }
 
 async function copyLatestInvite() {
   if (!lastInviteUrl.value) return;
   await navigator.clipboard.writeText(lastInviteUrl.value);
+  startLatestInviteCopyFeedback();
 }
 
 function queueLatestInviteLinkScroll() {
@@ -207,14 +224,14 @@ function copyInviteLink(invite) {
     if (result?.invite?.inviteUrl) {
       await navigator.clipboard.writeText(result.invite.inviteUrl);
     }
-    activeInviteId.value = null;
+    startInviteActionFeedback(invite.id, 'copy');
   });
 }
 
 function resendInvite(invite) {
   emit('resend-invite', invite, (result) => {
     applyInviteResult(result);
-    activeInviteId.value = null;
+    startInviteActionFeedback(invite.id, 'resend');
   });
 }
 
@@ -266,14 +283,21 @@ function confirmPromoteMember() {
   });
 }
 
-function removeMember(member) {
-  const confirmed = window.confirm(`Remove ${member.name} from this workspace?`);
-  if (!confirmed) return;
+function handleRemoveMember(member) {
+  removeMemberTarget.value = member;
+  modalMode.value = 'remove-member';
+  modalError.value = '';
+}
 
+function confirmRemoveMember() {
+  if (!removeMemberTarget.value) return;
+
+  const member = removeMemberTarget.value;
   emit('remove-member', member, () => {
     lastInviteNotice.value = `${member.name} was removed from the workspace.`;
     lastInviteNoticeTone.value = 'warning';
     activeMemberId.value = null;
+    closeModal();
   });
 }
 
@@ -281,6 +305,88 @@ function formatEmailPreview(email) {
   const value = String(email || '');
   return value.length > EMAIL_PREVIEW_LIMIT ? `${value.slice(0, EMAIL_PREVIEW_LIMIT)}...` : value;
 }
+
+function inviteActionFeedbackKey(inviteId, action) {
+  return `${action}:${inviteId}`;
+}
+
+function startInviteActionFeedback(inviteId, action) {
+  const key = inviteActionFeedbackKey(inviteId, action);
+  inviteActionFeedback[key] = true;
+
+  const existingTimer = inviteActionTimers.get(key);
+  if (existingTimer) {
+    window.clearTimeout(existingTimer);
+  }
+
+  const timer = window.setTimeout(() => {
+    delete inviteActionFeedback[key];
+    inviteActionTimers.delete(key);
+  }, ACTION_FEEDBACK_DURATION_MS);
+
+  inviteActionTimers.set(key, timer);
+}
+
+function hasInviteActionFeedback(inviteId, action) {
+  return Boolean(inviteActionFeedback[inviteActionFeedbackKey(inviteId, action)]);
+}
+
+function getInviteCopyLabel(inviteId) {
+  return hasInviteActionFeedback(inviteId, 'copy') ? 'Link copied' : 'Copy link';
+}
+
+function getInviteResendLabel(inviteId) {
+  return hasInviteActionFeedback(inviteId, 'resend') ? 'Sent!' : 'Resend';
+}
+
+function startLatestInviteCopyFeedback() {
+  latestInviteCopied.value = true;
+
+  if (latestInviteCopyTimer) {
+    window.clearTimeout(latestInviteCopyTimer);
+  }
+
+  latestInviteCopyTimer = window.setTimeout(() => {
+    latestInviteCopied.value = false;
+    latestInviteCopyTimer = null;
+  }, ACTION_FEEDBACK_DURATION_MS);
+}
+
+function clearInviteFormError() {
+  inviteFormError.value = '';
+
+  if (inviteFormErrorTimer) {
+    window.clearTimeout(inviteFormErrorTimer);
+    inviteFormErrorTimer = null;
+  }
+}
+
+function setInviteFormError(message) {
+  clearInviteFormError();
+  inviteFormError.value = message;
+
+  inviteFormErrorTimer = window.setTimeout(() => {
+    inviteFormError.value = '';
+    inviteFormErrorTimer = null;
+  }, INVITE_FORM_ERROR_DURATION_MS);
+}
+
+onBeforeUnmount(() => {
+  for (const timer of inviteActionTimers.values()) {
+    window.clearTimeout(timer);
+  }
+  inviteActionTimers.clear();
+
+  if (latestInviteCopyTimer) {
+    window.clearTimeout(latestInviteCopyTimer);
+    latestInviteCopyTimer = null;
+  }
+
+  if (inviteFormErrorTimer) {
+    window.clearTimeout(inviteFormErrorTimer);
+    inviteFormErrorTimer = null;
+  }
+});
 </script>
 
 <template>
@@ -331,6 +437,7 @@ function formatEmailPreview(email) {
         <form v-if="canCreateInvite" class="invite-form" @submit.prevent="submitInvite">
           <input v-model="inviteEmail" type="email" placeholder="Add a teammate by email" :disabled="pending" />
           <button type="submit" :disabled="pending || !inviteEmail.trim()">Send Invite</button>
+          <p v-if="inviteFormError" class="form-error">{{ inviteFormError }}</p>
         </form>
 
         <div class="member-list">
@@ -369,7 +476,7 @@ function formatEmailPreview(email) {
                 type="button"
                 class="ghost-danger"
                 :disabled="pending"
-                @click.stop="removeMember(member)"
+                @click.stop="handleRemoveMember(member)"
               >
                 Remove
               </button>
@@ -383,7 +490,14 @@ function formatEmailPreview(email) {
           <p class="subtle">Latest invite link</p>
           <input :value="lastInviteUrl" readonly />
           <p class="invite-feedback" :class="lastInviteNoticeTone">{{ lastInviteNotice }}</p>
-          <button class="ghost-button muted-button" :disabled="pending" @click="copyLatestInvite">Copy link</button>
+          <button
+            class="ghost-button muted-button"
+            :class="{ 'button-feedback-active': latestInviteCopied }"
+            :disabled="pending"
+            @click="copyLatestInvite"
+          >
+            {{ latestInviteCopied ? 'Link copied' : 'Copy link' }}
+          </button>
         </div>
       </section>
 
@@ -419,8 +533,24 @@ function formatEmailPreview(email) {
               <span>Expires {{ new Date(invite.expiresAt).toLocaleString() }}</span>
             </div>
             <div v-if="activeInviteId === invite.id" class="invite-actions">
-              <button type="button" class="ghost-button muted-button" :disabled="pending" @click.stop="copyInviteLink(invite)">Copy link</button>
-              <button type="button" class="ghost-button muted-button" :disabled="pending" @click.stop="resendInvite(invite)">Resend</button>
+              <button
+                type="button"
+                class="ghost-button muted-button"
+                :class="{ 'button-feedback-active': hasInviteActionFeedback(invite.id, 'copy') }"
+                :disabled="pending"
+                @click.stop="copyInviteLink(invite)"
+              >
+                {{ getInviteCopyLabel(invite.id) }}
+              </button>
+              <button
+                type="button"
+                class="ghost-button muted-button"
+                :class="{ 'button-feedback-active': hasInviteActionFeedback(invite.id, 'resend') }"
+                :disabled="pending"
+                @click.stop="resendInvite(invite)"
+              >
+                {{ getInviteResendLabel(invite.id) }}
+              </button>
               <button type="button" class="ghost-danger" :disabled="pending" @click.stop="handleCancelInvite(invite)">Cancel</button>
             </div>
           </div>
@@ -560,6 +690,19 @@ function formatEmailPreview(email) {
           <button class="ghost-button" type="button" :disabled="pending" @click="confirmPromoteMember">
             Make owner
           </button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'remove-member' && removeMemberTarget">
+        <div>
+          <p class="eyebrow">Remove member</p>
+          <h2>Remove {{ removeMemberTarget.name }} from this workspace?</h2>
+          <p class="subtle">They will lose access immediately and will need a new invite to rejoin.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Keep member</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmRemoveMember">Remove member</button>
         </div>
       </template>
 

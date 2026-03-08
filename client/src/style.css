@@ -1149,6 +1149,32 @@ textarea {
   background: var(--button-muted-hover);
 }
 
+.muted-button.button-feedback-active,
+.invite-link-card button.button-feedback-active {
+  background: var(--accent);
+  color: var(--button-primary-text);
+  animation: button-feedback-pop 0.35s ease;
+}
+
+.muted-button.button-feedback-active:hover,
+.invite-link-card button.button-feedback-active:hover {
+  background: var(--accent-hover);
+}
+
+@keyframes button-feedback-pop {
+  0% {
+    transform: scale(1);
+  }
+
+  45% {
+    transform: scale(1.04);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
 .invite-link-card {
   margin-top: 1rem;
 }

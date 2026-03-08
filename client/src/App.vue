@@ -668,8 +668,12 @@ async function deleteTask() {
   });
 }
 
-async function createInvite(email, onCreated) {
-  await withPending(async () => {
+async function createInvite(email, onCreated, onFailed) {
+  pending.value = true;
+  errorMessage.value = '';
+  authErrorMode.value = '';
+
+  try {
     const response = await request('/api/invites', {
       method: 'POST',
       body: JSON.stringify({ workspaceId: workspaceId.value, email })
@@ -678,7 +682,15 @@ async function createInvite(email, onCreated) {
       onCreated(response.invite);
     }
     await loadBootstrap();
-  });
+  } catch (error) {
+    if (typeof onFailed === 'function') {
+      onFailed(error.message);
+    } else {
+      errorMessage.value = error.message;
+    }
+  } finally {
+    pending.value = false;
+  }
 }
 
 async function resendInvite(invite, onCompleted) {
