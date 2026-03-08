@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import AccountProfileModal from './components/AccountProfileModal.vue';
 import AuthPanel from './components/AuthPanel.vue';
 import GroceryPanel from './components/GroceryPanel.vue';
 import ListSidebar from './components/ListSidebar.vue';
@@ -38,6 +39,7 @@ const pendingInvites = ref([]);
 const revokedWorkspaceId = ref(0);
 const noWorkspaceName = ref('');
 const deleteTaskTarget = ref(null);
+const accountModalOpen = ref(false);
 const boardPanelRef = ref(null);
 const listPanelRef = ref(null);
 let socket;
@@ -83,7 +85,8 @@ const ownerCount = computed(() => members.value.filter((member) => member.role =
 const heroEyebrow = computed(() => {
   if (inviteToken.value) return 'Workspace invitation';
   if (!hasWorkspace.value && inviteDetails.value) return 'Pending invitation';
-  return 'Authenticated workspace';
+  if (!hasWorkspace.value) return 'Workspace access';
+  return 'Current workspace';
 });
 const heroTitle = computed(() => {
   if ((inviteToken.value || !hasWorkspace.value) && inviteDetails.value?.workspaceName) {
@@ -209,6 +212,7 @@ function syncVisibleInvite() {
 }
 
 function clearSession() {
+  accountModalOpen.value = false;
   token.value = '';
   workspaceId.value = 0;
   workspace.value = null;
@@ -247,6 +251,20 @@ function openDeleteTaskModal(task) {
 
 function closeDeleteTaskModal() {
   deleteTaskTarget.value = null;
+}
+
+function openAccountModal() {
+  if (!isAuthenticated.value || pending.value) return;
+  accountModalOpen.value = true;
+}
+
+function closeAccountModal() {
+  accountModalOpen.value = false;
+}
+
+function logoutFromAccountModal() {
+  closeAccountModal();
+  clearSession();
 }
 
 function clearHashState() {
@@ -963,16 +981,16 @@ onBeforeUnmount(() => {
           <h1>{{ heroTitle }}</h1>
         </div>
         <div class="hero-meta">
-          <span>{{ currentUser?.name || 'Unknown user' }}</span>
-          <span>{{ heroStatus }}</span>
+          <span class="hero-meta-status">{{ heroStatus }}</span>
           <button
-            v-if="!hasWorkspace"
             type="button"
-            class="ghost-danger hero-meta-logout"
+            class="account-summary-button"
             :disabled="pending"
-            @click="clearSession"
+            @click="openAccountModal"
           >
-            Logout
+            <span class="account-summary-eyebrow">Account</span>
+            <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
+            <small>{{ currentUser?.email }}</small>
           </button>
         </div>
       </section>
@@ -1022,14 +1040,12 @@ onBeforeUnmount(() => {
           @create-workspace="createWorkspace"
           @delete-workspace="deleteWorkspace"
           @leave-workspace="leaveWorkspace"
-          @logout="clearSession"
           @promote-member="promoteMember"
           @rename-workspace="renameWorkspace"
           @remove-member="removeMember"
           @resend-invite="resendInvite"
           @select-workspace="switchWorkspace"
           @create-invite="createInvite"
-          @update-profile="updateProfile"
         />
 
         <div ref="boardPanelRef" class="layout-anchor">
@@ -1072,6 +1088,15 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </template>
+
+    <AccountProfileModal
+      :current-user="currentUser"
+      :open="accountModalOpen"
+      :pending="pending"
+      @close="closeAccountModal"
+      @logout="logoutFromAccountModal"
+      @update-profile="updateProfile"
+    />
 
     <div v-if="deleteTaskTarget" class="modal-backdrop" @click.self="closeDeleteTaskModal">
       <section class="panel action-modal">
