@@ -68,7 +68,10 @@ function submitTask() {
 }
 
 function startEditing(task) {
-  if (editingTaskId.value === task.id) return;
+  if (editingTaskId.value === task.id) {
+    cancelEditing();
+    return;
+  }
   editingTaskId.value = task.id;
   editDraft.title = task.title;
   editDraft.description = task.description || '';
@@ -182,10 +185,77 @@ function submitEdit(taskId) {
         </div>
 
         <div class="task-actions">
-          <button class="ghost-button muted-button" :disabled="pending || editingTaskId === task.id" @click="startEditing(task)">
-            {{ editingTaskId === task.id ? 'Editing' : 'Edit' }}
+          <button
+            type="button"
+            class="ghost-button muted-button task-action-button"
+            :disabled="pending"
+            :title="editingTaskId === task.id ? 'Hide edit options' : 'Edit task'"
+            :aria-label="editingTaskId === task.id ? 'Hide edit options' : 'Edit task'"
+            :aria-pressed="editingTaskId === task.id"
+            @click="startEditing(task)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 20h9"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+              <path
+                d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+            </svg>
           </button>
-          <button class="ghost-danger" :disabled="pending" @click="emit('delete-task', task)">Delete</button>
+          <button
+            type="button"
+            class="ghost-danger task-action-button"
+            :disabled="pending"
+            title="Delete task"
+            aria-label="Delete task"
+            @click="emit('delete-task', task)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M3 6h18"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+              <path
+                d="M8 6V4h8v2"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+              <path
+                d="M19 6v14H5V6"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+              <path
+                d="M10 11v5M14 11v5"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+            </svg>
+          </button>
         </div>
       </li>
       <li v-if="!tasks.length" class="task-empty">No tasks yet. Add the first item to start collaborating.</li>

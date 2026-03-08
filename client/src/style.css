@@ -1173,6 +1173,27 @@ textarea {
 
 .task-actions {
   justify-content: end;
+  align-items: start;
+}
+
+.task-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  line-height: 0;
+}
+
+.task-actions .task-action-button {
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.task-action-button svg {
+  width: 18px;
+  height: 18px;
 }
 
 .muted-button {
@@ -1467,8 +1488,37 @@ textarea {
   }
 
   .task-actions {
-    width: 100%;
-    justify-content: start;
+    width: auto;
+    justify-content: end;
+    align-self: start;
+    flex-wrap: nowrap;
+    gap: 0.45rem;
+  }
+
+  .task-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.75rem;
+    padding: 0.9rem;
+  }
+
+  .task-main {
+    gap: 0.65rem;
+  }
+
+  .task-badges {
+    margin-top: 0.55rem;
+  }
+
+  .task-note {
+    margin-top: 0.6rem;
+  }
+
+  .task-actions .task-action-button {
+    width: 40px;
+    min-height: 40px;
+    border-radius: 12px;
   }
 
   .modal-actions {
