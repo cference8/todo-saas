@@ -373,7 +373,7 @@ function submit() {
           </button>
         </div>
         <div v-if="isLoginMode" class="auth-inline-actions">
-          <button type="button" class="auth-link-button" :disabled="pending" @click="openForgotPassword">Reset password</button>
+          <button type="button" class="auth-link-button" :disabled="pending" @click="openForgotPassword">Forgot Password?</button>
         </div>
         <div v-if="isRegisterMode || isResetPasswordMode" class="auth-password-field">
           <input
