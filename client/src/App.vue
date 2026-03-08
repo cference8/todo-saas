@@ -31,9 +31,13 @@ const socketState = ref('closed');
 const lastEvent = ref(DEFAULT_LAST_EVENT);
 const errorMessage = ref('');
 const authErrorMode = ref('');
+const authNoticeMessage = ref('');
+const authNoticeMode = ref('');
+const authNoticeTone = ref('success');
 const googleAuthEnabled = ref(false);
 const appleAuthEnabled = ref(false);
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') || '');
+const resetToken = ref(new URLSearchParams(window.location.search).get('reset') || '');
 const inviteDetails = ref(null);
 const pendingInvites = ref([]);
 const revokedWorkspaceId = ref(0);
@@ -226,6 +230,11 @@ function clearSession() {
   currentUser.value = null;
   activeListId.value = null;
   lastEvent.value = DEFAULT_LAST_EVENT;
+  errorMessage.value = '';
+  authErrorMode.value = '';
+  authNoticeMessage.value = '';
+  authNoticeMode.value = '';
+  authNoticeTone.value = 'success';
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(WORKSPACE_KEY);
   disconnectSocket();
@@ -237,6 +246,13 @@ function clearInviteState() {
   syncVisibleInvite();
   const url = new URL(window.location.href);
   url.searchParams.delete('invite');
+  window.history.replaceState({}, '', url);
+}
+
+function clearPasswordResetState() {
+  resetToken.value = '';
+  const url = new URL(window.location.href);
+  url.searchParams.delete('reset');
   window.history.replaceState({}, '', url);
 }
 
@@ -444,6 +460,9 @@ async function withPending(work) {
   pending.value = true;
   errorMessage.value = '';
   authErrorMode.value = '';
+  authNoticeMessage.value = '';
+  authNoticeMode.value = '';
+  authNoticeTone.value = 'success';
   try {
     await work();
   } catch (error) {
@@ -456,17 +475,38 @@ async function withPending(work) {
 async function handleAuth(payload) {
   if (payload.mode === 'validation-error') {
     errorMessage.value = payload.error || 'Please fix the form errors and try again.';
-    authErrorMode.value = 'register';
+    authErrorMode.value = payload.forMode || 'register';
     return;
   }
 
   await withPending(async () => {
-    const endpoint = payload.mode === 'register' ? '/api/auth/register' : '/api/auth/login';
+    if (payload.mode === 'forgot-password') {
+      const response = await request('/api/auth/password-reset/request', {
+        method: 'POST',
+        headers: {},
+        body: JSON.stringify({ email: payload.email })
+      });
+      authNoticeMessage.value = response.notice || 'If an account exists for that email, a password reset link will arrive shortly.';
+      authNoticeMode.value = payload.mode;
+      authNoticeTone.value = 'success';
+      return;
+    }
+
+    const endpoint = payload.mode === 'reset-password'
+      ? '/api/auth/password-reset/complete'
+      : (payload.mode === 'register' ? '/api/auth/register' : '/api/auth/login');
+    const body = payload.mode === 'reset-password'
+      ? { resetToken: payload.resetToken, password: payload.password }
+      : payload;
     const response = await request(endpoint, {
       method: 'POST',
       headers: {},
-      body: JSON.stringify(payload)
+      body: JSON.stringify(body)
     });
+
+    if (payload.mode === 'reset-password') {
+      clearPasswordResetState();
+    }
 
     const nextWorkspaceId = response.defaultWorkspaceId || response.workspaces?.[0]?.id;
     persistSession(response.token, nextWorkspaceId);
@@ -481,6 +521,9 @@ async function handleAuth(payload) {
 function startGoogleAuth() {
   errorMessage.value = '';
   authErrorMode.value = '';
+  authNoticeMessage.value = '';
+  authNoticeMode.value = '';
+  authNoticeTone.value = 'success';
 
   const url = new URL('/api/auth/google', window.location.origin);
   if (inviteToken.value) {
@@ -493,6 +536,9 @@ function startGoogleAuth() {
 function startAppleAuth() {
   errorMessage.value = '';
   authErrorMode.value = '';
+  authNoticeMessage.value = '';
+  authNoticeMode.value = '';
+  authNoticeTone.value = 'success';
 
   const url = new URL('/api/auth/apple', window.location.origin);
   if (inviteToken.value) {
@@ -966,9 +1012,14 @@ onBeforeUnmount(() => {
         :apple-enabled="appleAuthEnabled"
         :error-message="errorMessage"
         :error-for-mode="authErrorMode"
+        :notice-message="authNoticeMessage"
+        :notice-for-mode="authNoticeMode"
+        :notice-tone="authNoticeTone"
         :pending="pending"
+        :reset-token="resetToken"
         :theme="theme"
         @apple="startAppleAuth"
+        @clear-reset="clearPasswordResetState"
         @google="startGoogleAuth"
         @submit="handleAuth"
       />

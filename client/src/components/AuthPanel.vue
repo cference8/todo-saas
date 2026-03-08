@@ -1,6 +1,11 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue';
 
+const LOGIN_MODE = 'login';
+const REGISTER_MODE = 'register';
+const FORGOT_PASSWORD_MODE = 'forgot-password';
+const RESET_PASSWORD_MODE = 'reset-password';
+
 const props = defineProps({
   invite: {
     type: Object,
@@ -29,12 +34,28 @@ const props = defineProps({
   pending: {
     type: Boolean,
     default: false
+  },
+  resetToken: {
+    type: String,
+    default: ''
+  },
+  noticeMessage: {
+    type: String,
+    default: ''
+  },
+  noticeForMode: {
+    type: String,
+    default: ''
+  },
+  noticeTone: {
+    type: String,
+    default: 'success'
   }
 });
 
-const emit = defineEmits(['submit', 'google', 'apple']);
+const emit = defineEmits(['submit', 'google', 'apple', 'clear-reset']);
 
-const mode = ref('login');
+const mode = ref(LOGIN_MODE);
 const form = reactive({
   name: '',
   email: '',
@@ -46,12 +67,43 @@ const form = reactive({
 const errorMode = ref('');
 const showPassword = ref(false);
 const lastSuggestedWorkspaceName = ref('');
+const isLoginMode = computed(() => mode.value === LOGIN_MODE);
+const isRegisterMode = computed(() => mode.value === REGISTER_MODE);
+const isForgotPasswordMode = computed(() => mode.value === FORGOT_PASSWORD_MODE);
+const isResetPasswordMode = computed(() => mode.value === RESET_PASSWORD_MODE);
+const showAuthToggle = computed(() => isLoginMode.value || isRegisterMode.value);
+const canShowOAuth = computed(() => (
+  showAuthToggle.value &&
+  (props.googleEnabled || props.appleEnabled)
+));
 const googleButtonAsset = computed(() => (
-  mode.value === 'register'
+  mode.value === REGISTER_MODE
     ? `/google-imgs/svg/${props.theme}/web_${props.theme}_rd_SU.svg`
     : `/google-imgs/svg/${props.theme}/web_${props.theme}_rd_SI.svg`
 ));
-const googleButtonLabel = computed(() => (mode.value === 'register' ? 'Sign up with Google' : 'Sign in with Google'));
+const googleButtonLabel = computed(() => (mode.value === REGISTER_MODE ? 'Sign up with Google' : 'Sign in with Google'));
+const passwordPlaceholder = computed(() => (isResetPasswordMode.value ? 'New password' : 'Password'));
+const confirmPasswordPlaceholder = computed(() => (isResetPasswordMode.value ? 'Retype new password' : 'Retype password'));
+const helperCopy = computed(() => {
+  if (isForgotPasswordMode.value) {
+    return 'Enter the email you use to sign in and we will send a reset link.';
+  }
+
+  if (isResetPasswordMode.value) {
+    return 'Choose a new password for your account.';
+  }
+
+  return '';
+});
+const submitButtonLabel = computed(() => {
+  if (isForgotPasswordMode.value) return 'Send reset link';
+  if (isResetPasswordMode.value) return 'Save new password';
+
+  return isLoginMode.value
+    ? (props.invite ? 'Continue to invite' : 'Enter workspace')
+    : (props.invite ? 'Create account to continue' : 'Create account');
+});
+const noticeToneClass = computed(() => `form-notice-${props.noticeTone === 'warning' ? 'warning' : 'success'}`);
 
 function defaultWorkspaceNameFor(name) {
   const firstName = String(name || '')
@@ -75,8 +127,19 @@ watch(
 watch(
   () => props.invite?.hasAccount,
   (hasAccount) => {
-    if (props.invite) {
-      mode.value = hasAccount ? 'login' : 'register';
+    if (props.invite && !props.resetToken && mode.value !== FORGOT_PASSWORD_MODE) {
+      mode.value = hasAccount ? LOGIN_MODE : REGISTER_MODE;
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => props.resetToken,
+  (token) => {
+    if (token) {
+      mode.value = RESET_PASSWORD_MODE;
+      errorMode.value = '';
     }
   },
   { immediate: true }
@@ -108,46 +171,109 @@ watch(
 );
 
 watch(mode, (value) => {
-  if (value !== 'register') {
+  if (value !== REGISTER_MODE && value !== RESET_PASSWORD_MODE) {
     form.confirmPassword = '';
+  }
+
+  if (value === FORGOT_PASSWORD_MODE) {
+    form.password = '';
+    showPassword.value = false;
   }
 });
 
-function emitValidationError(error) {
-  errorMode.value = 'register';
+function emitValidationError(error, targetMode = mode.value) {
+  errorMode.value = targetMode;
   emit('submit', {
     mode: 'validation-error',
-    error
+    error,
+    forMode: targetMode
   });
 }
 
+function openForgotPassword() {
+  errorMode.value = '';
+  mode.value = FORGOT_PASSWORD_MODE;
+}
+
+function returnToLogin() {
+  errorMode.value = '';
+  form.password = '';
+  form.confirmPassword = '';
+  mode.value = LOGIN_MODE;
+
+  if (props.resetToken) {
+    emit('clear-reset');
+  }
+}
+
 function submit() {
-  if (mode.value === 'register') {
-    const trimmedName = form.name.trim();
-    if (trimmedName.length < 2 || trimmedName.length > 60) {
-      emitValidationError('Name must be between 2 and 60 characters.');
+  if (isForgotPasswordMode.value) {
+    if (!form.email.trim()) {
+      emitValidationError('Email is required.', FORGOT_PASSWORD_MODE);
+      return;
+    }
+
+    emit('submit', {
+      mode: FORGOT_PASSWORD_MODE,
+      email: form.email.trim()
+    });
+    return;
+  }
+
+  if (isResetPasswordMode.value) {
+    if (!props.resetToken) {
+      emitValidationError('Password reset link is invalid or expired.', RESET_PASSWORD_MODE);
+      return;
+    }
+
+    if (!form.password) {
+      emitValidationError('Enter a new password.', RESET_PASSWORD_MODE);
       return;
     }
 
     if (!form.confirmPassword) {
-      emitValidationError('Please retype your password.');
+      emitValidationError('Please retype your new password.', RESET_PASSWORD_MODE);
       return;
     }
 
     if (form.password !== form.confirmPassword) {
-      emitValidationError('Passwords do not match.');
+      emitValidationError('Passwords do not match.', RESET_PASSWORD_MODE);
       return;
     }
 
+    emit('submit', {
+      mode: RESET_PASSWORD_MODE,
+      resetToken: props.resetToken,
+      password: form.password
+    });
+    return;
+  }
+
+  if (isRegisterMode.value) {
+    const trimmedName = form.name.trim();
+    if (trimmedName.length < 2 || trimmedName.length > 60) {
+      emitValidationError('Name must be between 2 and 60 characters.', REGISTER_MODE);
+      return;
+    }
+
+    if (!form.confirmPassword) {
+      emitValidationError('Please retype your password.', REGISTER_MODE);
+      return;
+    }
+
+    if (form.password !== form.confirmPassword) {
+      emitValidationError('Passwords do not match.', REGISTER_MODE);
+      return;
+    }
   }
 
   emit('submit', {
     mode: mode.value,
-    inviteToken: mode.value === 'register' ? props.invite?.token || null : null,
+    inviteToken: mode.value === REGISTER_MODE ? props.invite?.token || null : null,
     name: form.name.trim(),
     email: form.email.trim(),
     password: form.password,
-    workspaceName: mode.value === 'register' && !props.invite ? form.workspaceName.trim() : ''
+    workspaceName: mode.value === REGISTER_MODE && !props.invite ? form.workspaceName.trim() : ''
   });
 }
 </script>
@@ -167,12 +293,18 @@ function submit() {
     </div>
 
     <div class="auth-card">
-      <div class="auth-toggle">
-        <button type="button" :class="{ active: mode === 'login' }" @click="mode = 'login'">Login</button>
-        <button type="button" :class="{ active: mode === 'register' }" @click="mode = 'register'">Register</button>
+      <div v-if="showAuthToggle" class="auth-toggle">
+        <button type="button" :class="{ active: mode === LOGIN_MODE }" @click="mode = LOGIN_MODE">Login</button>
+        <button type="button" :class="{ active: mode === REGISTER_MODE }" @click="mode = REGISTER_MODE">Register</button>
+      </div>
+      <div v-else class="auth-mode-header">
+        <p class="eyebrow">{{ isResetPasswordMode ? 'Choose a new password' : 'Reset your password' }}</p>
+        <button type="button" class="auth-link-button" :disabled="pending" @click="returnToLogin">Back to login</button>
       </div>
 
-      <div v-if="googleEnabled || appleEnabled" class="oauth-actions">
+      <p v-if="helperCopy" class="subtle">{{ helperCopy }}</p>
+
+      <div v-if="canShowOAuth" class="oauth-actions">
         <button
           v-if="googleEnabled"
           type="button"
@@ -194,13 +326,13 @@ function submit() {
         </button>
       </div>
       <p v-if="errorMessage && (errorForMode === 'google' || errorForMode === 'apple')" class="form-error">{{ errorMessage }}</p>
-      <div v-if="googleEnabled || appleEnabled" class="auth-separator">
+      <div v-if="canShowOAuth" class="auth-separator">
         <span>or use email</span>
       </div>
 
       <form class="auth-form" @submit.prevent="submit">
         <input
-          v-if="mode === 'register'"
+          v-if="isRegisterMode"
           v-model="form.name"
           type="text"
           placeholder="Your name"
@@ -211,6 +343,7 @@ function submit() {
           required
         />
         <input
+          v-if="!isResetPasswordMode"
           v-model="form.email"
           :readonly="Boolean(invite?.email)"
           type="email"
@@ -219,13 +352,13 @@ function submit() {
           :disabled="pending"
           required
         />
-        <div class="auth-password-field auth-password-field-with-toggle">
+        <div v-if="!isForgotPasswordMode" class="auth-password-field auth-password-field-with-toggle">
           <input
             v-model="form.password"
             :type="showPassword ? 'text' : 'password'"
-            placeholder="Password"
+            :placeholder="passwordPlaceholder"
             :disabled="pending"
-            :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
+            :autocomplete="isLoginMode ? 'current-password' : 'new-password'"
             required
           />
           <button
@@ -239,27 +372,37 @@ function submit() {
             {{ showPassword ? 'Hide' : 'Show' }}
           </button>
         </div>
-        <div v-if="mode === 'register'" class="auth-password-field">
+        <div v-if="isLoginMode" class="auth-inline-actions">
+          <button type="button" class="auth-link-button" :disabled="pending" @click="openForgotPassword">Reset password</button>
+        </div>
+        <div v-if="isRegisterMode || isResetPasswordMode" class="auth-password-field">
           <input
             v-model="form.confirmPassword"
             :type="showPassword ? 'text' : 'password'"
-            placeholder="Retype password"
+            :placeholder="confirmPasswordPlaceholder"
             :disabled="pending"
             autocomplete="new-password"
             required
           />
         </div>
         <input
-          v-if="mode === 'register' && !invite"
+          v-if="isRegisterMode && !invite"
           v-model="form.workspaceName"
           type="text"
           placeholder="Workspace name"
           autocomplete="organization"
           :disabled="pending"
         />
+        <p
+          v-if="noticeMessage && (!noticeForMode || noticeForMode === mode)"
+          class="form-notice"
+          :class="noticeToneClass"
+        >
+          {{ noticeMessage }}
+        </p>
         <p v-if="errorMessage && (!errorMode || errorMode === mode)" class="form-error">{{ errorMessage }}</p>
         <button type="submit" class="auth-submit-button" :disabled="pending">
-          {{ mode === 'login' ? (invite ? 'Continue to invite' : 'Enter workspace') : (invite ? 'Create account to continue' : 'Create account') }}
+          {{ submitButtonLabel }}
         </button>
       </form>
     </div>

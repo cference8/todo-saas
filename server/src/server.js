@@ -10,12 +10,14 @@ import { buildAppleAuthUrl, exchangeAppleCode, isAppleAuthEnabled, parseAppleUse
 import { issueAuthToken, issueOAuthState, verifyAuthToken, verifyOAuthState } from './auth.js';
 import { buildGoogleAuthUrl, exchangeGoogleCode, isGoogleAuthEnabled } from './google-oauth.js';
 import { getInviteEmailStatus, sendWorkspaceInviteEmail } from './invite-email.js';
+import { sendPasswordResetEmail } from './password-reset-email.js';
 import {
   acceptInviteForUser,
   authenticateWithApple,
   authenticateWithGoogle,
   authenticateUser,
   cancelWorkspaceInvite,
+  createPasswordResetRequest,
   createWorkspace,
   createList,
   createTask,
@@ -35,6 +37,7 @@ import {
   removeWorkspaceMember,
   registerUser,
   resendWorkspaceInvite,
+  resetPasswordWithToken,
   updateUserProfile,
   updateTask
 } from './db.js';
@@ -53,6 +56,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const socketGroups = new Map();
 const userWorkspaceSockets = new Map();
+const PASSWORD_RESET_REQUEST_NOTICE = 'If an account exists for that email, a password reset link will arrive shortly.';
 
 app.use(cors({ origin: clientOrigin, credentials: true }));
 app.use(express.json());
@@ -68,6 +72,13 @@ function buildInviteUrl(req, inviteToken) {
   const inviteUrl = new URL(baseUrl);
   inviteUrl.searchParams.set('invite', inviteToken);
   return inviteUrl.toString();
+}
+
+function buildPasswordResetUrl(req, resetToken) {
+  const baseUrl = String(req.headers.origin || process.env.CLIENT_ORIGIN || clientOrigin);
+  const resetUrl = new URL(baseUrl);
+  resetUrl.searchParams.set('reset', resetToken);
+  return resetUrl.toString();
 }
 
 async function deliverInviteEmail({ req, invite }) {
@@ -108,6 +119,36 @@ async function deliverInviteEmail({ req, invite }) {
     inviteUrl,
     emailDelivery
   };
+}
+
+async function deliverPasswordResetEmail({ req, resetRequest }) {
+  const resetUrl = buildPasswordResetUrl(req, resetRequest.token);
+
+  try {
+    const emailDelivery = await sendPasswordResetEmail({
+      resetId: resetRequest.id,
+      resetUrl,
+      email: resetRequest.email,
+      recipientName: resetRequest.name,
+      expiresAt: resetRequest.expiresAt
+    });
+
+    if (!emailDelivery.ok) {
+      console.warn('Password reset email was not sent', {
+        resetId: resetRequest.id,
+        userId: resetRequest.userId,
+        email: resetRequest.email,
+        status: emailDelivery.status
+      });
+    }
+  } catch (error) {
+    console.error('Failed to send password reset email', {
+      resetId: resetRequest.id,
+      userId: resetRequest.userId,
+      email: resetRequest.email,
+      error: error.message
+    });
+  }
 }
 
 function parseCookies(header = '') {
@@ -357,6 +398,48 @@ app.post('/api/auth/register', async (req, res) => {
     const { user, workspace, workspaces } = await registerUser({ name, email, password, workspaceName, inviteToken });
     const token = issueAuthToken({ userId: user.id, email: user.email });
     res.status(201).json({ token, user, workspaces, defaultWorkspaceId: workspace?.id || workspaces[0]?.id || null });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/auth/password-reset/request', async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim();
+    if (!email) {
+      res.status(400).json({ error: 'Email is required.' });
+      return;
+    }
+
+    const resetRequest = await createPasswordResetRequest({ email });
+    if (resetRequest) {
+      await deliverPasswordResetEmail({ req, resetRequest });
+    }
+
+    res.json({ notice: PASSWORD_RESET_REQUEST_NOTICE });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/auth/password-reset/complete', async (req, res) => {
+  try {
+    const resetToken = String(req.body.resetToken || '').trim();
+    const password = String(req.body.password || '');
+
+    if (!resetToken || !password) {
+      res.status(400).json({ error: 'resetToken and password are required.' });
+      return;
+    }
+
+    const authResult = await resetPasswordWithToken({ resetToken, password });
+    const token = issueAuthToken({ userId: authResult.user.id, email: authResult.user.email });
+    res.json({
+      token,
+      user: authResult.user,
+      workspaces: authResult.workspaces,
+      defaultWorkspaceId: authResult.defaultWorkspaceId
+    });
   } catch (error) {
     sendError(res, error);
   }

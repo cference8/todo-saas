@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS workspace_invites (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 UPDATE workspace_invites
 SET email = LOWER(email)
 WHERE email <> LOWER(email);
@@ -88,6 +97,10 @@ USING (
 ) duplicates
 WHERE wi.id = duplicates.id;
 
+DELETE FROM password_reset_tokens
+WHERE used_at IS NOT NULL
+   OR expires_at <= NOW();
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject
 ON users(google_subject)
 WHERE google_subject IS NOT NULL;
@@ -103,3 +116,9 @@ WHERE token IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_one_pending_email
 ON workspace_invites(workspace_id, email)
 WHERE accepted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id
+ON password_reset_tokens(user_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash
+ON password_reset_tokens(token_hash);

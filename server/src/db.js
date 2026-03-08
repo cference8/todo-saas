@@ -6,6 +6,7 @@ import { hashPassword, verifyPassword } from './auth.js';
 const connectionString = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/todo_saas';
 const pool = new Pool({ connectionString });
 const INVITE_TTL_DAYS = 7;
+const PASSWORD_RESET_TTL_HOURS = 2;
 const LIST_TYPES = new Set(['task', 'grocery']);
 
 function fmt(value) {
@@ -182,6 +183,15 @@ export async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      used_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     UPDATE workspace_invites
     SET email = LOWER(email)
     WHERE email <> LOWER(email);
@@ -208,12 +218,18 @@ export async function initDb() {
     ) duplicates
     WHERE wi.id = duplicates.id;
 
+    DELETE FROM password_reset_tokens
+    WHERE used_at IS NOT NULL
+       OR expires_at <= NOW();
+
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace_id ON workspace_invites(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites(email);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_token ON workspace_invites(token) WHERE token IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_one_pending_email
     ON workspace_invites(workspace_id, email)
     WHERE accepted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_subject ON users(google_subject) WHERE google_subject IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_subject ON users(apple_subject) WHERE apple_subject IS NOT NULL;
   `);
@@ -224,6 +240,14 @@ function hashInviteToken(token) {
 }
 
 function issueInviteToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+function hashPasswordResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function issuePasswordResetToken() {
   return crypto.randomBytes(24).toString('hex');
 }
 
@@ -325,6 +349,142 @@ export async function authenticateUser({ email, password }) {
     workspaces,
     defaultWorkspaceId: workspaces[0]?.id ?? null
   };
+}
+
+export async function createPasswordResetRequest({ email }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) {
+    const error = new Error('Email is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const userResult = await client.query(
+      `SELECT id,
+              name,
+              email,
+              password_hash AS "passwordHash"
+       FROM users
+       WHERE email = $1
+       FOR UPDATE`,
+      [normalizedEmail]
+    );
+    const user = userResult.rows[0];
+
+    if (!user || !user.passwordHash) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [user.id]);
+
+    const token = issuePasswordResetToken();
+    const tokenHash = hashPasswordResetToken(token);
+    const resetResult = await client.query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, NOW() + ($3 * INTERVAL '1 hour'))
+       RETURNING id, expires_at AS "expiresAt", created_at AS "createdAt"`,
+      [user.id, tokenHash, PASSWORD_RESET_TTL_HOURS]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      ...resetResult.rows[0],
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      token
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+
+    if (error.code === '23505' && error.constraint === 'idx_password_reset_tokens_token_hash') {
+      const tokenConflictError = new Error('Failed to issue a password reset link. Please try again.');
+      tokenConflictError.status = 409;
+      throw tokenConflictError;
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function resetPasswordWithToken({ resetToken, password }) {
+  const token = String(resetToken || '').trim();
+  if (!token || !password) {
+    const error = new Error('Reset token and password are required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const resetResult = await client.query(
+      `SELECT prt.id,
+              prt.user_id AS "userId",
+              prt.used_at AS "usedAt",
+              prt.expires_at AS "expiresAt",
+              u.name,
+              u.email
+       FROM password_reset_tokens prt
+       JOIN users u ON u.id = prt.user_id
+       WHERE prt.token_hash = $1
+       FOR UPDATE`,
+      [hashPasswordResetToken(token)]
+    );
+    const resetRecord = resetResult.rows[0];
+
+    if (!resetRecord || resetRecord.usedAt || resetRecord.expiresAt <= new Date()) {
+      const error = new Error('Password reset link is invalid or expired.');
+      error.status = 404;
+      throw error;
+    }
+
+    const nextPasswordHash = await hashPassword(password);
+
+    await client.query(
+      `UPDATE users
+       SET password_hash = $2
+       WHERE id = $1`,
+      [resetRecord.userId, nextPasswordHash]
+    );
+
+    await client.query(
+      `UPDATE password_reset_tokens
+       SET used_at = NOW()
+       WHERE user_id = $1
+         AND used_at IS NULL`,
+      [resetRecord.userId]
+    );
+
+    await client.query('COMMIT');
+
+    const workspaces = await getUserWorkspaces(resetRecord.userId);
+    return {
+      user: {
+        id: resetRecord.userId,
+        name: resetRecord.name,
+        email: resetRecord.email
+      },
+      workspaces,
+      defaultWorkspaceId: workspaces[0]?.id ?? null
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function authenticateWithGoogle({ email, googleSubject, name, inviteToken = null }) {

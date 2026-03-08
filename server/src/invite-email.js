@@ -1,47 +1,15 @@
-const RESEND_API_URL = 'https://api.resend.com/emails';
-
-function isFlagEnabled(value) {
-  return String(value || '').trim().toLowerCase() === 'true';
-}
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
+import {
+  escapeHtml,
+  getEmailDeliveryConfig,
+  getEmailDeliveryStatus,
+  sendTransactionalEmail
+} from './email-service.js';
 
 function formatInviteExpiry(expiresAt) {
   return new Date(expiresAt).toLocaleString('en-US', {
     dateStyle: 'medium',
     timeStyle: 'short'
   });
-}
-
-function getInviteEmailConfig() {
-  return {
-    enabled: isFlagEnabled(process.env.INVITE_EMAILS_ENABLED),
-    provider: String(process.env.INVITE_EMAIL_PROVIDER || 'resend').trim().toLowerCase(),
-    resendApiKey: String(process.env.RESEND_API_KEY || '').trim(),
-    fromEmail: String(process.env.INVITE_FROM_EMAIL || '').trim(),
-    fromName: String(process.env.INVITE_FROM_NAME || 'Tasked').trim() || 'Tasked'
-  };
-}
-
-function isInviteEmailConfigured() {
-  const config = getInviteEmailConfig();
-  return Boolean(
-    config.enabled &&
-    config.provider === 'resend' &&
-    config.resendApiKey &&
-    config.fromEmail
-  );
-}
-
-function buildFromAddress({ fromName, fromEmail }) {
-  return `${fromName} <${fromEmail}>`;
 }
 
 function buildInviteEmail({ inviteUrl, inviteeEmail, inviterLabel, workspaceName, expiresAt, productName }) {
@@ -89,12 +57,22 @@ function buildInviteEmail({ inviteUrl, inviteeEmail, inviterLabel, workspaceName
 }
 
 export function getInviteEmailStatus() {
-  const config = getInviteEmailConfig();
-  return {
-    enabled: isInviteEmailConfigured(),
-    requested: config.enabled,
-    provider: config.provider
-  };
+  return getEmailDeliveryStatus();
+}
+
+function inviteDeliveryMessage(status, inviteeEmail) {
+  switch (status) {
+    case 'disabled':
+      return 'Invite email delivery is disabled.';
+    case 'unsupported-provider':
+      return 'Invite email delivery provider is not supported.';
+    case 'misconfigured':
+      return 'Invite email delivery is enabled but not fully configured.';
+    case 'sent':
+      return `Invite email sent to ${inviteeEmail}.`;
+    default:
+      return 'Invite email delivery is unavailable.';
+  }
 }
 
 export async function sendWorkspaceInviteEmail({
@@ -106,34 +84,7 @@ export async function sendWorkspaceInviteEmail({
   workspaceName,
   expiresAt
 }) {
-  const config = getInviteEmailConfig();
-
-  if (!config.enabled) {
-    return {
-      attempted: false,
-      ok: false,
-      status: 'disabled',
-      message: 'Invite email delivery is disabled.'
-    };
-  }
-
-  if (config.provider !== 'resend') {
-    return {
-      attempted: false,
-      ok: false,
-      status: 'unsupported-provider',
-      message: `Invite email provider "${config.provider}" is not supported.`
-    };
-  }
-
-  if (!isInviteEmailConfigured()) {
-    return {
-      attempted: false,
-      ok: false,
-      status: 'misconfigured',
-      message: 'Invite email delivery is enabled but not fully configured.'
-    };
-  }
+  const config = getEmailDeliveryConfig();
 
   const email = buildInviteEmail({
     inviteUrl,
@@ -144,36 +95,17 @@ export async function sendWorkspaceInviteEmail({
     productName: config.fromName || 'Tasked'
   });
 
-  const response = await fetch(RESEND_API_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.resendApiKey}`,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': `workspace-invite-${inviteId}`
-    },
-    body: JSON.stringify({
-      from: buildFromAddress(config),
-      to: [inviteeEmail],
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-      ...(replyTo ? { reply_to: replyTo } : {})
-    })
+  const delivery = await sendTransactionalEmail({
+    to: inviteeEmail,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    replyTo,
+    idempotencyKey: `workspace-invite-${inviteId}`
   });
 
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload.id) {
-    const error = new Error(payload?.message || 'Invite email delivery failed.');
-    error.status = 502;
-    throw error;
-  }
-
   return {
-    attempted: true,
-    ok: true,
-    status: 'sent',
-    message: `Invite email sent to ${inviteeEmail}.`,
-    provider: config.provider,
-    providerMessageId: payload.id
+    ...delivery,
+    message: inviteDeliveryMessage(delivery.status, inviteeEmail)
   };
 }
