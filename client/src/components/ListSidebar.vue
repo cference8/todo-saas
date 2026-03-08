@@ -83,7 +83,7 @@ function confirmDeleteList() {
         <h1>{{ activeList?.name || 'Boards & lists' }}</h1>
         <p class="subtle">{{ listSummary }}</p>
       </div>
-      <button class="ghost-button" :disabled="pending" @click="handleCreateList">New list</button>
+      <button class="ghost-button list-create-button" :disabled="pending" @click="handleCreateList">New list</button>
     </div>
 
     <div class="panel-scroll">

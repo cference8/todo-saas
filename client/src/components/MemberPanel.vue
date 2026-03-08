@@ -361,8 +361,8 @@ onBeforeUnmount(() => {
 
     <div v-if="lastInviteUrl" ref="latestInviteLinkCardRef" class="invite-link-card">
       <p class="subtle">Latest invite link</p>
-      <input :value="lastInviteUrl" readonly />
       <p class="invite-feedback" :class="lastInviteNoticeTone">{{ lastInviteNotice }}</p>
+      <input :value="lastInviteUrl" readonly />
       <button
         class="ghost-button muted-button"
         :class="{ 'button-feedback-active': latestInviteCopied }"
@@ -371,6 +371,7 @@ onBeforeUnmount(() => {
       >
         {{ latestInviteCopied ? 'Link copied' : 'Copy link' }}
       </button>
+      <p class="subtle">Texting the link works too.</p>
     </div>
 
     <div v-if="invites.length" class="invite-list">

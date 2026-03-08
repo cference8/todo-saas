@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
 const EMAIL_PREVIEW_LIMIT = 17;
 const ACTION_FEEDBACK_DURATION_MS = 5000;
@@ -75,12 +75,14 @@ const activeMemberId = ref(null);
 const promoteMemberTarget = ref(null);
 const removeMemberTarget = ref(null);
 const cancelInviteTarget = ref(null);
+const panelScrollRef = ref(null);
 const latestInviteLinkCardRef = ref(null);
 const latestInviteCopied = ref(false);
 const modalMode = ref('');
 const modalError = ref('');
 const inviteActionFeedback = reactive({});
 const inviteActionTimers = new Map();
+const shouldRevealLatestInvite = ref(false);
 let latestInviteCopyTimer = null;
 let inviteFormErrorTimer = null;
 
@@ -167,13 +169,14 @@ function confirmDeleteWorkspace() {
   closeModal();
 }
 
-function applyInviteResult(result = {}) {
+function applyInviteResult(result = {}, options = {}) {
   clearInviteFormError();
   lastInviteUrl.value = result.invite?.inviteUrl || '';
   lastInviteNotice.value = result.notice || result.invite?.emailDelivery?.message || 'Invite link ready.';
   lastInviteNoticeTone.value = result.tone || (result.invite?.emailDelivery?.ok ? 'success' : 'warning');
 
-  if (lastInviteUrl.value) {
+  if (options.revealLatestInvite && lastInviteUrl.value) {
+    shouldRevealLatestInvite.value = true;
     queueLatestInviteLinkScroll();
   }
 }
@@ -184,7 +187,7 @@ function submitInvite() {
 
   clearInviteFormError();
   emit('create-invite', nextEmail, (invite) => {
-    applyInviteResult({ invite });
+    applyInviteResult({ invite }, { revealLatestInvite: true });
     inviteEmail.value = '';
   }, (message) => {
     setInviteFormError(message || 'Could not send invite.');
@@ -202,6 +205,7 @@ function clearLatestInviteLink() {
   lastInviteNotice.value = '';
   lastInviteNoticeTone.value = 'muted';
   latestInviteCopied.value = false;
+  shouldRevealLatestInvite.value = false;
 
   if (latestInviteCopyTimer) {
     window.clearTimeout(latestInviteCopyTimer);
@@ -210,16 +214,40 @@ function clearLatestInviteLink() {
 }
 
 function queueLatestInviteLinkScroll() {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-  if (!window.matchMedia('(max-width: 720px)').matches) return;
-
   nextTick(() => {
-    latestInviteLinkCardRef.value?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
+    const inviteCard = latestInviteLinkCardRef.value;
+    const scrollContainer = panelScrollRef.value;
+
+    if (!inviteCard) return;
+
+    if (!scrollContainer) {
+      inviteCard.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+      return;
+    }
+
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const cardRect = inviteCard.getBoundingClientRect();
+    const nextTop = scrollContainer.scrollTop + (cardRect.top - containerRect.top) - 16;
+
+    scrollContainer.scrollTo({
+      top: Math.max(nextTop, 0),
+      behavior: 'smooth'
     });
   });
 }
+
+watch(
+  () => props.invites.length,
+  () => {
+    if (!shouldRevealLatestInvite.value || !lastInviteUrl.value) return;
+
+    queueLatestInviteLinkScroll();
+    shouldRevealLatestInvite.value = false;
+  }
+);
 
 function toggleInviteActions(inviteId) {
   activeInviteId.value = activeInviteId.value === inviteId ? null : inviteId;
@@ -411,7 +439,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="panel-scroll">
+    <div ref="panelScrollRef" class="panel-scroll">
       <section class="workspace-section">
         <label class="workspace-switcher-label" for="workspace-switcher">Switch workspace</label>
         <select
@@ -493,8 +521,8 @@ onBeforeUnmount(() => {
       <section v-if="lastInviteUrl" class="workspace-section">
         <div ref="latestInviteLinkCardRef" class="invite-link-card">
           <p class="subtle">Latest invite link</p>
-          <input :value="lastInviteUrl" readonly />
           <p class="invite-feedback" :class="lastInviteNoticeTone">{{ lastInviteNotice }}</p>
+          <input :value="lastInviteUrl" readonly />
           <button
             class="ghost-button muted-button"
             :class="{ 'button-feedback-active': latestInviteCopied }"
@@ -503,6 +531,7 @@ onBeforeUnmount(() => {
           >
             {{ latestInviteCopied ? 'Link copied' : 'Copy link' }}
           </button>
+          <p class="subtle">Texting the link works too.</p>
         </div>
       </section>
 

@@ -574,6 +574,17 @@ textarea::placeholder {
   min-width: 0;
 }
 
+.list-panel-header > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-create-button {
+  flex: 0 0 auto;
+  min-width: 108px;
+  white-space: nowrap;
+}
+
 .workspace-switcher-label {
   display: block;
   margin-top: 1rem;
