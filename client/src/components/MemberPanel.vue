@@ -26,20 +26,25 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['create-invite', 'logout']);
+const emit = defineEmits(['create-invite', 'copy-invite-link', 'resend-invite', 'cancel-invite', 'logout']);
 const inviteEmail = ref('');
 const lastInviteUrl = ref('');
 const lastInviteNotice = ref('');
 const lastInviteNoticeTone = ref('muted');
+const activeInviteId = ref(null);
 
 const canInvite = computed(() => props.role === 'owner');
+
+function applyInviteResult(result = {}) {
+  lastInviteUrl.value = result.invite?.inviteUrl || '';
+  lastInviteNotice.value = result.notice || result.invite?.emailDelivery?.message || 'Invite link ready.';
+  lastInviteNoticeTone.value = result.tone || (result.invite?.emailDelivery?.ok ? 'success' : 'warning');
+}
 
 function submitInvite() {
   if (!inviteEmail.value.trim()) return;
   emit('create-invite', inviteEmail.value.trim(), (invite) => {
-    lastInviteUrl.value = invite?.inviteUrl || '';
-    lastInviteNotice.value = invite?.emailDelivery?.message || 'Invite link created.';
-    lastInviteNoticeTone.value = invite?.emailDelivery?.ok ? 'success' : 'warning';
+    applyInviteResult({ invite });
   });
   inviteEmail.value = '';
 }
@@ -47,6 +52,38 @@ function submitInvite() {
 async function copyLatestInvite() {
   if (!lastInviteUrl.value) return;
   await navigator.clipboard.writeText(lastInviteUrl.value);
+}
+
+function toggleInviteActions(inviteId) {
+  activeInviteId.value = activeInviteId.value === inviteId ? null : inviteId;
+}
+
+function copyInviteLink(invite) {
+  emit('copy-invite-link', invite, async (result) => {
+    applyInviteResult(result);
+    if (result?.invite?.inviteUrl) {
+      await navigator.clipboard.writeText(result.invite.inviteUrl);
+    }
+    activeInviteId.value = null;
+  });
+}
+
+function resendInvite(invite) {
+  emit('resend-invite', invite, (result) => {
+    applyInviteResult(result);
+    activeInviteId.value = null;
+  });
+}
+
+function cancelInvite(invite) {
+  const confirmed = window.confirm(`Cancel the invite for ${invite.email}?`);
+  if (!confirmed) return;
+
+  emit('cancel-invite', invite, () => {
+    lastInviteNotice.value = `Invite canceled for ${invite.email}.`;
+    lastInviteNoticeTone.value = 'warning';
+    activeInviteId.value = null;
+  });
 }
 
 function formatEmailPreview(email) {
@@ -89,14 +126,26 @@ function formatEmailPreview(email) {
     </div>
 
     <div v-if="invites.length" class="invite-list">
-      <div v-for="invite in invites" :key="invite.id" class="invite-row">
+      <div
+        v-for="invite in invites"
+        :key="invite.id"
+        class="invite-row"
+        :class="{ active: activeInviteId === invite.id }"
+      >
         <div class="invite-row-header">
-          <strong class="invite-email">{{ invite.email }}</strong>
+          <button type="button" class="invite-summary" :disabled="pending" @click="toggleInviteActions(invite.id)">
+            <strong class="invite-email">{{ invite.email }}</strong>
+          </button>
           <small class="member-role invite-role">{{ invite.role }}</small>
         </div>
         <div class="invite-row-meta">
           <span class="invite-status">Pending invite</span>
           <span>Expires {{ new Date(invite.expiresAt).toLocaleString() }}</span>
+        </div>
+        <div v-if="activeInviteId === invite.id" class="invite-actions">
+          <button type="button" class="ghost-button muted-button" :disabled="pending" @click="copyInviteLink(invite)">Copy link</button>
+          <button type="button" class="ghost-button muted-button" :disabled="pending" @click="resendInvite(invite)">Resend</button>
+          <button type="button" class="ghost-danger" :disabled="pending" @click="cancelInvite(invite)">Cancel</button>
         </div>
       </div>
     </div>

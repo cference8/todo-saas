@@ -384,6 +384,53 @@ async function createInvite(email, onCreated) {
   });
 }
 
+async function resendInvite(invite, onCompleted) {
+  await withPending(async () => {
+    const response = await request(`/api/invites/${invite.id}/resend`, {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspaceId.value })
+    });
+    if (typeof onCompleted === 'function') {
+      onCompleted({
+        invite: response.invite,
+        notice: response.invite.emailDelivery?.message || `Invite resent to ${invite.email}.`,
+        tone: response.invite.emailDelivery?.ok ? 'success' : 'warning'
+      });
+    }
+    await loadBootstrap();
+  });
+}
+
+async function copyInviteLink(invite, onCompleted) {
+  await withPending(async () => {
+    const response = await request(`/api/invites/${invite.id}/link`, {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspaceId.value })
+    });
+    if (typeof onCompleted === 'function') {
+      onCompleted({
+        invite: response.invite,
+        notice: `Fresh invite link ready for ${invite.email}.`,
+        tone: 'success'
+      });
+    }
+    await loadBootstrap();
+  });
+}
+
+async function cancelInvite(invite, onCompleted) {
+  await withPending(async () => {
+    await request(`/api/invites/${invite.id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ workspaceId: workspaceId.value })
+    });
+    if (typeof onCompleted === 'function') {
+      onCompleted();
+    }
+    await loadBootstrap();
+  });
+}
+
 async function loadInvite() {
   if (!inviteToken.value) return;
 
@@ -584,8 +631,11 @@ onBeforeUnmount(() => {
           :members="members"
           :role="currentMembership?.role || 'member'"
           :pending="pending"
+          @cancel-invite="cancelInvite"
+          @copy-invite-link="copyInviteLink"
           @create-invite="createInvite"
           @logout="clearSession"
+          @resend-invite="resendInvite"
         />
       </section>
     </template>

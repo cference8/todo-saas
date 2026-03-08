@@ -777,6 +777,95 @@ export async function createWorkspaceInvite({ workspaceId, userId, email, role =
   };
 }
 
+export async function cancelWorkspaceInvite({ workspaceId, inviteId }) {
+  const result = await pool.query(
+    `DELETE FROM workspace_invites
+     WHERE id = $1
+       AND workspace_id = $2
+       AND accepted_at IS NULL
+       AND expires_at > NOW()
+     RETURNING id, email`,
+    [inviteId, workspaceId]
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function resendWorkspaceInvite({ workspaceId, inviteId, userId }) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const workspaceResult = await client.query(
+      `SELECT id, name, slug
+       FROM workspaces
+       WHERE id = $1`,
+      [workspaceId]
+    );
+    if (!workspaceResult.rowCount) {
+      const error = new Error('Workspace not found.');
+      error.status = 404;
+      throw error;
+    }
+
+    const inviteResult = await client.query(
+      `SELECT id, email, role, accepted_at AS "acceptedAt"
+       FROM workspace_invites
+       WHERE id = $1
+         AND workspace_id = $2
+       FOR UPDATE`,
+      [inviteId, workspaceId]
+    );
+
+    const invite = inviteResult.rows[0];
+    if (!invite || invite.acceptedAt) {
+      const error = new Error('Invite not found or no longer pending.');
+      error.status = 404;
+      throw error;
+    }
+
+    const membershipResult = await client.query(
+      `SELECT 1
+       FROM workspace_members wm
+       JOIN users u ON u.id = wm.user_id
+       WHERE wm.workspace_id = $1 AND u.email = $2`,
+      [workspaceId, invite.email]
+    );
+    if (membershipResult.rowCount) {
+      const error = new Error('That user is already a member of this workspace.');
+      error.status = 409;
+      throw error;
+    }
+
+    const token = issueInviteToken();
+    const tokenHash = hashInviteToken(token);
+    const result = await client.query(
+      `UPDATE workspace_invites
+       SET token_hash = $3,
+           invited_by_user_id = $4,
+           expires_at = NOW() + ($5 * INTERVAL '1 day')
+       WHERE id = $1
+         AND workspace_id = $2
+       RETURNING id, email, role, created_at AS "createdAt", expires_at AS "expiresAt"`,
+      [inviteId, workspaceId, tokenHash, userId, INVITE_TTL_DAYS]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      ...result.rows[0],
+      workspace: workspaceResult.rows[0],
+      token
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getInviteByToken(inviteToken) {
   const invite = await pool.query(
     `SELECT wi.id,

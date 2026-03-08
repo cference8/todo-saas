@@ -15,6 +15,7 @@ import {
   authenticateWithApple,
   authenticateWithGoogle,
   authenticateUser,
+  cancelWorkspaceInvite,
   createList,
   createTask,
   createWorkspaceInvite,
@@ -26,6 +27,7 @@ import {
   getSnapshot,
   initDb,
   registerUser,
+  resendWorkspaceInvite,
   updateTask
 } from './db.js';
 
@@ -50,6 +52,52 @@ app.use(express.urlencoded({ extended: false }));
 function sendError(res, error) {
   const status = error.status || 500;
   res.status(status).json({ error: error.message || 'Internal server error.' });
+}
+
+function buildInviteUrl(req, inviteToken) {
+  const baseUrl = String(req.headers.origin || process.env.CLIENT_ORIGIN || clientOrigin);
+  const inviteUrl = new URL(baseUrl);
+  inviteUrl.searchParams.set('invite', inviteToken);
+  return inviteUrl.toString();
+}
+
+async function deliverInviteEmail({ req, invite }) {
+  const inviteUrl = buildInviteUrl(req, invite.token);
+  const inviterLabel = req.auth.email || 'A teammate';
+
+  let emailDelivery;
+  try {
+    emailDelivery = await sendWorkspaceInviteEmail({
+      inviteId: invite.id,
+      inviteUrl,
+      inviteeEmail: invite.email,
+      inviterLabel,
+      workspaceName: invite.workspace?.name || 'your workspace',
+      expiresAt: invite.expiresAt
+    });
+  } catch (error) {
+    console.error('Failed to send invite email', {
+      inviteId: invite.id,
+      email: invite.email,
+      error: error.message
+    });
+    emailDelivery = {
+      attempted: true,
+      ok: false,
+      status: 'failed',
+      message: 'Invite created, but the email could not be sent.'
+    };
+  }
+
+  return {
+    id: invite.id,
+    email: invite.email,
+    role: invite.role,
+    createdAt: invite.createdAt,
+    expiresAt: invite.expiresAt,
+    inviteUrl,
+    emailDelivery
+  };
 }
 
 function parseCookies(header = '') {
@@ -565,47 +613,84 @@ app.post('/api/invites', requireAuth, requireWorkspace, async (req, res) => {
     }
 
     const invite = await createWorkspaceInvite({ workspaceId: req.workspaceId, userId: req.auth.userId, email });
-    const baseUrl = String(req.headers.origin || process.env.CLIENT_ORIGIN || clientOrigin);
-    const inviteUrl = new URL(baseUrl);
-    inviteUrl.searchParams.set('invite', invite.token);
-    const inviterLabel = req.auth.email || 'A teammate';
-
-    let emailDelivery;
-    try {
-      emailDelivery = await sendWorkspaceInviteEmail({
-        inviteId: invite.id,
-        inviteUrl: inviteUrl.toString(),
-        inviteeEmail: invite.email,
-        inviterLabel,
-        workspaceName: invite.workspace?.name || 'your workspace',
-        expiresAt: invite.expiresAt
-      });
-    } catch (error) {
-      console.error('Failed to send invite email', {
-        inviteId: invite.id,
-        email: invite.email,
-        error: error.message
-      });
-      emailDelivery = {
-        attempted: true,
-        ok: false,
-        status: 'failed',
-        message: 'Invite created, but the email could not be sent.'
-      };
-    }
+    const invitePayload = await deliverInviteEmail({ req, invite });
 
     broadcastToWorkspace(req.workspaceId, 'invite.created', { email: invite.email });
-    res.status(201).json({
+    res.status(201).json({ invite: invitePayload });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/invites/:id/resend', requireAuth, requireWorkspace, async (req, res) => {
+  try {
+    if (req.membership.role !== 'owner') {
+      res.status(403).json({ error: 'Only workspace owners can manage invites.' });
+      return;
+    }
+
+    const invite = await resendWorkspaceInvite({
+      workspaceId: req.workspaceId,
+      inviteId: Number(req.params.id),
+      userId: req.auth.userId
+    });
+    const invitePayload = await deliverInviteEmail({ req, invite });
+
+    broadcastToWorkspace(req.workspaceId, 'invite.resent', { inviteId: invite.id, email: invite.email });
+    res.json({ invite: invitePayload });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/invites/:id/link', requireAuth, requireWorkspace, async (req, res) => {
+  try {
+    if (req.membership.role !== 'owner') {
+      res.status(403).json({ error: 'Only workspace owners can manage invites.' });
+      return;
+    }
+
+    const invite = await resendWorkspaceInvite({
+      workspaceId: req.workspaceId,
+      inviteId: Number(req.params.id),
+      userId: req.auth.userId
+    });
+    const inviteUrl = buildInviteUrl(req, invite.token);
+
+    broadcastToWorkspace(req.workspaceId, 'invite.link_refreshed', { inviteId: invite.id, email: invite.email });
+    res.json({
       invite: {
         id: invite.id,
         email: invite.email,
         role: invite.role,
         createdAt: invite.createdAt,
         expiresAt: invite.expiresAt,
-        inviteUrl: inviteUrl.toString(),
-        emailDelivery
+        inviteUrl
       }
     });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete('/api/invites/:id', requireAuth, requireWorkspace, async (req, res) => {
+  try {
+    if (req.membership.role !== 'owner') {
+      res.status(403).json({ error: 'Only workspace owners can manage invites.' });
+      return;
+    }
+
+    const invite = await cancelWorkspaceInvite({
+      workspaceId: req.workspaceId,
+      inviteId: Number(req.params.id)
+    });
+    if (!invite) {
+      res.status(404).json({ error: 'Invite not found or no longer pending.' });
+      return;
+    }
+
+    broadcastToWorkspace(req.workspaceId, 'invite.cancelled', { inviteId: invite.id, email: invite.email });
+    res.status(204).end();
   } catch (error) {
     sendError(res, error);
   }

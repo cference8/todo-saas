@@ -315,11 +315,26 @@ textarea {
   gap: 0.7rem;
 }
 
+.invite-row.active {
+  border-color: rgba(13, 139, 115, 0.24);
+  box-shadow: 0 10px 24px rgba(13, 139, 115, 0.08);
+}
+
 .invite-row-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.75rem;
+}
+
+.invite-summary {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .invite-email {
@@ -353,6 +368,20 @@ textarea {
   background: rgba(13, 139, 115, 0.1);
   color: var(--accent-dark);
   font-weight: 600;
+}
+
+.invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding-top: 0.25rem;
+}
+
+.invite-actions .ghost-button,
+.invite-actions .ghost-danger {
+  min-height: 40px;
+  padding: 0 0.95rem;
+  border-radius: 999px;
 }
 
 .list-card-main {
