@@ -371,7 +371,7 @@ onBeforeUnmount(() => {
       >
         {{ latestInviteCopied ? 'Link copied' : 'Copy link' }}
       </button>
-      <p class="subtle">Texting the link works too.</p>
+      <p class="subtle">Send the link via text message works too.</p>
     </div>
 
     <div v-if="invites.length" class="invite-list">
