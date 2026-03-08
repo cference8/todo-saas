@@ -79,6 +79,23 @@ async function createWorkspaceForUser(client, { userId, workspaceName }) {
   return workspace;
 }
 
+async function getCurrentUserProfile(userId, db = pool) {
+  const result = await db.query(
+    `SELECT id,
+            name,
+            email,
+            created_at AS "createdAt",
+            (password_hash <> '') AS "hasPassword",
+            (google_subject IS NOT NULL) AS "hasGoogle",
+            (apple_subject IS NOT NULL) AS "hasApple"
+     FROM users
+     WHERE id = $1`,
+    [userId]
+  );
+
+  return result.rows[0] || null;
+}
+
 export async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -485,29 +502,110 @@ export async function authenticateWithApple({ email, appleSubject, name, inviteT
 }
 
 export async function getAuthSession(userId) {
-  const [userResult, workspaces, pendingInvites] = await Promise.all([
-    pool.query(
-      `SELECT id, name, email, created_at AS "createdAt"
-       FROM users
-       WHERE id = $1`,
-      [userId]
-    ),
+  const [user, workspaces, pendingInvites] = await Promise.all([
+    getCurrentUserProfile(userId),
     getUserWorkspaces(userId),
     getPendingInvitesForUser(userId)
   ]);
 
-  if (!userResult.rowCount) {
+  if (!user) {
     const error = new Error('User not found.');
     error.status = 404;
     throw error;
   }
 
   return {
-    user: userResult.rows[0],
+    user,
     workspaces,
     pendingInvites,
     defaultWorkspaceId: workspaces[0]?.id ?? null
   };
+}
+
+export async function updateUserProfile({ userId, name, currentPassword = '', newPassword = '' }) {
+  const nextName = String(name || '').trim();
+  if (!nextName) {
+    const error = new Error('Name is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const userResult = await client.query(
+      `SELECT id, name, password_hash AS "passwordHash"
+       FROM users
+       WHERE id = $1
+       FOR UPDATE`,
+      [userId]
+    );
+
+    const user = userResult.rows[0];
+    if (!user) {
+      const error = new Error('User not found.');
+      error.status = 404;
+      throw error;
+    }
+
+    const wantsPasswordChange = Boolean(currentPassword || newPassword);
+    let nextPasswordHash = null;
+
+    if (wantsPasswordChange) {
+      if (!user.passwordHash) {
+        const error = new Error('Password changes are unavailable for this sign-in method.');
+        error.status = 400;
+        throw error;
+      }
+
+      if (!currentPassword || !newPassword) {
+        const error = new Error('Current password and new password are required to change your password.');
+        error.status = 400;
+        throw error;
+      }
+
+      const validPassword = await verifyPassword(currentPassword, user.passwordHash);
+      if (!validPassword) {
+        const error = new Error('Current password is incorrect.');
+        error.status = 401;
+        throw error;
+      }
+
+      nextPasswordHash = await hashPassword(newPassword);
+    }
+
+    if (wantsPasswordChange) {
+      await client.query(
+        `UPDATE users
+         SET name = $2,
+             password_hash = $3
+         WHERE id = $1`,
+        [userId, nextName, nextPasswordHash]
+      );
+    } else {
+      await client.query(
+        `UPDATE users
+         SET name = $2
+         WHERE id = $1`,
+        [userId, nextName]
+      );
+    }
+
+    const updatedUser = await getCurrentUserProfile(userId, client);
+    await client.query('COMMIT');
+
+    return {
+      user: updatedUser,
+      nameChanged: nextName !== user.name
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getUserWorkspaces(userId) {
@@ -960,12 +1058,7 @@ export async function getSnapshot({ userId, workspaceId }) {
        WHERE id = $1`,
       [workspaceId]
     ),
-    pool.query(
-      `SELECT id, name, email, created_at AS "createdAt"
-       FROM users
-       WHERE id = $1`,
-      [userId]
-    ),
+    getCurrentUserProfile(userId),
     getUserWorkspaces(userId),
     pool.query(
       `SELECT l.id, l.name,
@@ -1004,7 +1097,7 @@ export async function getSnapshot({ userId, workspaceId }) {
 
   return {
     workspace: workspaceResult.rows[0],
-    currentUser: userResult.rows[0],
+    currentUser: userResult,
     memberships,
     members,
     invites,

@@ -35,6 +35,7 @@ import {
   removeWorkspaceMember,
   registerUser,
   resendWorkspaceInvite,
+  updateUserProfile,
   updateTask
 } from './db.js';
 
@@ -365,6 +366,49 @@ app.get('/api/auth/session', requireAuth, async (req, res) => {
   try {
     const session = await getAuthSession(req.auth.userId);
     res.json(session);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.patch('/api/auth/profile', requireAuth, async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const currentPassword = String(req.body.currentPassword || '');
+    const newPassword = String(req.body.newPassword || '');
+
+    if (!name) {
+      res.status(400).json({ error: 'Name is required.' });
+      return;
+    }
+
+    if (name.length < 2 || name.length > 60) {
+      res.status(400).json({ error: 'Name must be between 2 and 60 characters.' });
+      return;
+    }
+
+    const updateResult = await updateUserProfile({
+      userId: req.auth.userId,
+      name,
+      currentPassword,
+      newPassword
+    });
+    const session = await getAuthSession(req.auth.userId);
+
+    if (updateResult.nameChanged) {
+      for (const workspace of session.workspaces) {
+        broadcastToWorkspace(workspace.id, 'profile.updated', {
+          userId: req.auth.userId
+        });
+      }
+    }
+
+    res.json({
+      user: session.user,
+      workspaces: session.workspaces,
+      pendingInvites: session.pendingInvites,
+      defaultWorkspaceId: session.defaultWorkspaceId
+    });
   } catch (error) {
     sendError(res, error);
   }

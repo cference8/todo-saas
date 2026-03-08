@@ -493,6 +493,46 @@ async function switchWorkspace(nextWorkspaceId) {
   });
 }
 
+async function updateProfile(payload, onCompleted, onFailed) {
+  pending.value = true;
+  errorMessage.value = '';
+  authErrorMode.value = '';
+
+  try {
+    const response = await request('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name: payload.name,
+        currentPassword: payload.currentPassword || '',
+        newPassword: payload.newPassword || ''
+      })
+    });
+
+    currentUser.value = response.user;
+    memberships.value = normalizeMemberships(response.workspaces || memberships.value);
+    pendingInvites.value = normalizePendingInvites(response.pendingInvites || pendingInvites.value);
+    syncVisibleInvite();
+
+    if (workspaceId.value) {
+      await loadBootstrap();
+    }
+
+    lastEvent.value = 'Profile updated.';
+
+    if (typeof onCompleted === 'function') {
+      onCompleted(response.user);
+    }
+  } catch (error) {
+    if (typeof onFailed === 'function') {
+      onFailed(error.message);
+    } else {
+      errorMessage.value = error.message;
+    }
+  } finally {
+    pending.value = false;
+  }
+}
+
 async function createWorkspace(name) {
   const workspaceName = String(name || '').trim();
   if (!workspaceName) {
@@ -989,6 +1029,7 @@ onBeforeUnmount(() => {
           @resend-invite="resendInvite"
           @select-workspace="switchWorkspace"
           @create-invite="createInvite"
+          @update-profile="updateProfile"
         />
 
         <div ref="boardPanelRef" class="layout-anchor">
