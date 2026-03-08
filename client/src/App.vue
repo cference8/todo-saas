@@ -120,7 +120,7 @@ function scrollToLists() {
 }
 
 async function handleSelectList(listId) {
-  activeListId.value = Number(listId) || null;
+  activeListId.value = listId ?? null;
   await nextTick();
   if (isMobileViewport()) {
     scrollToPanel(boardPanelRef);
