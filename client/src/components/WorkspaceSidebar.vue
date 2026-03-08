@@ -244,11 +244,11 @@ function formatEmailPreview(email) {
         </select>
 
         <div class="workspace-actions">
-          <button class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
-          <button v-if="canLeaveWorkspace" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
+          <button type="button" class="ghost-button muted-button" :disabled="pending" @click="handleCreateWorkspace">New workspace</button>
+          <button v-if="canLeaveWorkspace" type="button" class="ghost-danger" :disabled="pending" @click="handleLeaveWorkspace">
             Leave workspace
           </button>
-          <button v-else-if="canDeleteWorkspace" class="ghost-danger" :disabled="pending" @click="handleDeleteWorkspace">
+          <button v-else-if="canDeleteWorkspace" type="button" class="ghost-danger" :disabled="pending" @click="handleDeleteWorkspace">
             Delete workspace
           </button>
         </div>
@@ -378,21 +378,23 @@ function formatEmailPreview(email) {
   <div v-if="modalMode" class="modal-backdrop" @click.self="closeModal">
     <section class="panel action-modal">
       <template v-if="modalMode === 'create-workspace'">
-        <div>
-          <p class="eyebrow">New workspace</p>
-          <h2>Create another workspace</h2>
-          <p class="subtle">You will become the owner and start with fresh default lists.</p>
-        </div>
+        <form class="modal-form-stack" @submit.prevent="submitCreateWorkspace">
+          <div>
+            <p class="eyebrow">New workspace</p>
+            <h2>Create another workspace</h2>
+            <p class="subtle">You will become the owner and start with fresh default lists.</p>
+          </div>
 
-        <div class="modal-form">
-          <input v-model="workspaceForm.name" type="text" placeholder="Workspace name" :disabled="pending" />
-          <p v-if="modalError" class="form-error">{{ modalError }}</p>
-        </div>
+          <div class="modal-form">
+            <input v-model="workspaceForm.name" type="text" placeholder="Workspace name" :disabled="pending" />
+            <p v-if="modalError" class="form-error">{{ modalError }}</p>
+          </div>
 
-        <div class="modal-actions">
-          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
-          <button class="ghost-button" type="button" :disabled="pending" @click="submitCreateWorkspace">Create workspace</button>
-        </div>
+          <div class="modal-actions">
+            <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+            <button class="ghost-button" type="submit" :disabled="pending">Create workspace</button>
+          </div>
+        </form>
       </template>
 
       <template v-else-if="modalMode === 'leave-workspace'">

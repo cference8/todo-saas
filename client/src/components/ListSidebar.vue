@@ -93,18 +93,24 @@ function confirmDeleteList() {
           :key="list.id"
           class="list-card"
           :class="{ active: list.id === currentListId }"
+          role="button"
+          tabindex="0"
+          :aria-pressed="list.id === currentListId"
+          @click="emit('select-list', list.id)"
+          @keydown.enter.prevent="emit('select-list', list.id)"
+          @keydown.space.prevent="emit('select-list', list.id)"
         >
-          <button class="list-card-main" @click="emit('select-list', list.id)">
+          <div class="list-card-main">
             <span>
               <strong>{{ list.name }}</strong>
               <small>{{ list.taskCount }} {{ list.type === 'grocery' ? 'items' : 'tasks' }}</small>
             </span>
-          </button>
-          <span class="list-card-actions">
+          </div>
+          <div class="list-card-actions">
             <small class="list-type-chip">{{ list.type }}</small>
             <small>{{ list.openCount }} open</small>
-            <button class="icon-button" title="Delete list" @click.stop="handleDeleteList(list)">×</button>
-          </span>
+            <button type="button" class="icon-button" title="Delete list" @click.stop="handleDeleteList(list)">×</button>
+          </div>
         </article>
       </div>
     </div>
@@ -113,37 +119,39 @@ function confirmDeleteList() {
   <div v-if="modalMode" class="modal-backdrop" @click.self="closeModal">
     <section class="panel action-modal">
       <template v-if="modalMode === 'create'">
-        <div>
-          <p class="eyebrow">New list</p>
-          <h2>Create a list</h2>
-          <p class="subtle">Choose the list name and type. Grocery lists use quantity instead of task priority and due date.</p>
-        </div>
-
-        <div class="modal-form">
-          <input v-model="createForm.name" type="text" placeholder="List name" :disabled="pending" />
-          <div class="type-radio-group">
-            <label class="type-radio">
-              <input v-model="createForm.type" type="radio" value="task" :disabled="pending" />
-              <span>
-                <strong>Task list</strong>
-                <small>Use due dates and priority.</small>
-              </span>
-            </label>
-            <label class="type-radio">
-              <input v-model="createForm.type" type="radio" value="grocery" :disabled="pending" />
-              <span>
-                <strong>Grocery list</strong>
-                <small>Use quantity and shopping notes.</small>
-              </span>
-            </label>
+        <form class="modal-form-stack" @submit.prevent="submitCreateList">
+          <div>
+            <p class="eyebrow">New list</p>
+            <h2>Create a list</h2>
+            <p class="subtle">Choose the list name and type. Grocery lists use quantity instead of task priority and due date.</p>
           </div>
-          <p v-if="modalError" class="form-error">{{ modalError }}</p>
-        </div>
 
-        <div class="modal-actions">
-          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
-          <button class="ghost-button" type="button" :disabled="pending" @click="submitCreateList">Create list</button>
-        </div>
+          <div class="modal-form">
+            <input v-model="createForm.name" type="text" placeholder="List name" :disabled="pending" />
+            <div class="type-radio-group">
+              <label class="type-radio">
+                <input v-model="createForm.type" type="radio" value="task" :disabled="pending" />
+                <span>
+                  <strong>Task list</strong>
+                  <small>Use due dates and priority.</small>
+                </span>
+              </label>
+              <label class="type-radio">
+                <input v-model="createForm.type" type="radio" value="grocery" :disabled="pending" />
+                <span>
+                  <strong>Grocery list</strong>
+                  <small>Use quantity and shopping notes.</small>
+                </span>
+              </label>
+            </div>
+            <p v-if="modalError" class="form-error">{{ modalError }}</p>
+          </div>
+
+          <div class="modal-actions">
+            <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
+            <button class="ghost-button" type="submit" :disabled="pending">Create list</button>
+          </div>
+        </form>
       </template>
 
       <template v-else-if="modalMode === 'delete'">

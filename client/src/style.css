@@ -270,7 +270,8 @@ textarea::placeholder {
 }
 
 .modal-form,
-.modal-actions {
+.modal-actions,
+.modal-form-stack {
   display: grid;
   gap: 0.75rem;
 }
@@ -530,6 +531,15 @@ textarea {
   transform: translateY(-1px);
 }
 
+.list-card {
+  cursor: pointer;
+}
+
+.list-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .list-card.active {
   border-color: var(--surface-card-active-border);
   background: var(--surface-card-active);
@@ -685,10 +695,7 @@ textarea {
 
 .list-card-main {
   flex: 1;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  text-align: left;
+  min-width: 0;
 }
 
 .list-card small,
@@ -709,6 +716,8 @@ textarea {
 }
 
 .list-card-actions {
+  display: flex;
+  flex-direction: column;
   align-items: end;
   gap: 0.5rem;
 }
