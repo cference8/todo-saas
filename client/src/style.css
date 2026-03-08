@@ -546,6 +546,21 @@ textarea {
   box-shadow: var(--surface-card-danger-shadow);
 }
 
+.member-row.clickable {
+  cursor: pointer;
+}
+
+.member-row.clickable:hover {
+  transform: translateY(-1px);
+}
+
+.member-row.clickable:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--focus-ring),
+    var(--surface-card-danger-shadow);
+}
+
 .list-card:hover {
   transform: translateY(-1px);
 }
@@ -584,13 +599,9 @@ textarea {
 .member-summary {
   flex: 1;
   min-width: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
   display: flex;
   flex-direction: column;
   text-align: left;
-  cursor: pointer;
 }
 
 .member-email {

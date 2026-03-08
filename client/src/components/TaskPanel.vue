@@ -96,7 +96,7 @@ function submitEdit(taskId) {
   <section class="panel task-panel">
     <header class="task-header">
       <div>
-        <p class="eyebrow">Live board</p>
+        <p class="eyebrow">Task board</p>
         <h2>{{ activeList?.name || 'Select a list' }}</h2>
         <p class="subtle">{{ tasks.length }} total tasks • {{ completionRate }}% complete</p>
       </div>
@@ -182,7 +182,7 @@ function submitEdit(taskId) {
           <button class="ghost-button muted-button" :disabled="pending || editingTaskId === task.id" @click="startEditing(task)">
             {{ editingTaskId === task.id ? 'Editing' : 'Edit' }}
           </button>
-          <button class="ghost-danger" :disabled="pending" @click="emit('delete-task', task.id)">Delete</button>
+          <button class="ghost-danger" :disabled="pending" @click="emit('delete-task', task)">Delete</button>
         </div>
       </li>
       <li v-if="!tasks.length" class="task-empty">No tasks yet. Add the first item to start collaborating.</li>

@@ -167,7 +167,7 @@ function submitEdit(taskId) {
           <button class="ghost-button muted-button" :disabled="pending || editingTaskId === task.id" @click="startEditing(task)">
             {{ editingTaskId === task.id ? 'Editing' : 'Edit' }}
           </button>
-          <button class="ghost-danger" :disabled="pending" @click="emit('delete-task', task.id)">Delete</button>
+          <button class="ghost-danger" :disabled="pending" @click="emit('delete-task', task)">Delete</button>
         </div>
       </li>
       <li v-if="!tasks.length" class="task-empty">No grocery items yet. Add the first item to start the list.</li>

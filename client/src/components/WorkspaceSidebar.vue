@@ -321,18 +321,17 @@ function formatEmailPreview(email) {
             v-for="member in members"
             :key="member.id"
             class="member-row"
-            :class="{ active: activeMemberId === member.id }"
+            :class="{ active: activeMemberId === member.id, clickable: canManageMember(member) }"
+            :role="canManageMember(member) ? 'button' : undefined"
+            :tabindex="canManageMember(member) ? 0 : undefined"
+            @click="canManageMember(member) && toggleMemberActions(member.id)"
+            @keydown.enter.prevent="canManageMember(member) && toggleMemberActions(member.id)"
+            @keydown.space.prevent="canManageMember(member) && toggleMemberActions(member.id)"
           >
-            <button
-              v-if="canManageMember(member)"
-              type="button"
-              class="member-summary"
-              :disabled="pending"
-              @click="toggleMemberActions(member.id)"
-            >
+            <div v-if="canManageMember(member)" class="member-summary">
               <strong>{{ member.name }}</strong>
               <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
-            </button>
+            </div>
             <span v-else>
               <strong>{{ member.name }}</strong>
               <small class="member-email" :title="member.email">{{ formatEmailPreview(member.email) }}</small>
@@ -344,7 +343,7 @@ function formatEmailPreview(email) {
                 type="button"
                 class="ghost-button muted-button"
                 :disabled="pending"
-                @click="promoteMember(member)"
+                @click.stop="promoteMember(member)"
               >
                 Make owner
               </button>
@@ -353,7 +352,7 @@ function formatEmailPreview(email) {
                 type="button"
                 class="ghost-danger"
                 :disabled="pending"
-                @click="removeMember(member)"
+                @click.stop="removeMember(member)"
               >
                 Remove
               </button>

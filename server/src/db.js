@@ -9,7 +9,27 @@ const INVITE_TTL_DAYS = 7;
 const LIST_TYPES = new Set(['task', 'grocery']);
 
 function fmt(value) {
-  return value ? new Date(value).toLocaleString() : null;
+  return value ? new Date(value).toLocaleDateString() : null;
+}
+
+function normalizeDateOnly(value) {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, 10) : null;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+function fmtDateOnly(value) {
+  const normalized = normalizeDateOnly(value);
+  return normalized ? new Date(`${normalized}T00:00:00`).toLocaleDateString() : null;
 }
 
 function slugify(input) {
@@ -955,14 +975,18 @@ export async function getSnapshot({ userId, workspaceId }) {
     members,
     invites,
     lists: listsResult.rows,
-    tasks: tasksResult.rows.map((task) => ({
-      ...task,
-      createdAtLabel: fmt(task.createdAt),
-      completedAtLabel: fmt(task.completedAt),
-      dueDateLabel: task.dueDate ? new Date(`${task.dueDate}T00:00:00`).toLocaleDateString() : null,
-      createdByName: task.createdByName || 'Unknown user',
-      completedByName: task.completedByName || null
-    })),
+    tasks: tasksResult.rows.map((task) => {
+      const dueDate = normalizeDateOnly(task.dueDate);
+      return {
+        ...task,
+        dueDate,
+        createdAtLabel: fmt(task.createdAt),
+        completedAtLabel: fmt(task.completedAt),
+        dueDateLabel: fmtDateOnly(dueDate),
+        createdByName: task.createdByName || 'Unknown user',
+        completedByName: task.completedByName || null
+      };
+    }),
     defaultListId: listsResult.rows[0]?.id ?? null
   };
 }

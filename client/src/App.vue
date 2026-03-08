@@ -37,11 +37,20 @@ const inviteDetails = ref(null);
 const pendingInvites = ref([]);
 const revokedWorkspaceId = ref(0);
 const noWorkspaceName = ref('');
+const deleteTaskTarget = ref(null);
 let socket;
 let reconnectTimer;
 let allowReconnect = true;
 
 const activeList = computed(() => lists.value.find((list) => list.id === activeListId.value) || null);
+
+function parseDueDate(value) {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const normalized = String(value).slice(0, 10);
+  const timestamp = new Date(`${normalized}T00:00:00`).getTime();
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
+}
+
 const activeTasks = computed(() => {
   const priorityWeight = { high: 0, medium: 1, low: 2 };
   return tasks.value
@@ -54,8 +63,8 @@ const activeTasks = computed(() => {
         return b.id - a.id;
       }
 
-      const dueA = a.dueDate ? new Date(`${a.dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
-      const dueB = b.dueDate ? new Date(`${b.dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
+      const dueA = parseDueDate(a.dueDate);
+      const dueB = parseDueDate(b.dueDate);
       if (dueA !== dueB) return dueA - dueB;
 
       const priorityOrder = (priorityWeight[a.priority] ?? 1) - (priorityWeight[b.priority] ?? 1);
@@ -199,6 +208,19 @@ function clearInviteState() {
   const url = new URL(window.location.href);
   url.searchParams.delete('invite');
   window.history.replaceState({}, '', url);
+}
+
+function openDeleteTaskModal(task) {
+  if (!task?.id) return;
+  deleteTaskTarget.value = {
+    id: Number(task.id),
+    title: task.title || 'this item',
+    kind: activeList.value?.type === 'grocery' ? 'item' : 'task'
+  };
+}
+
+function closeDeleteTaskModal() {
+  deleteTaskTarget.value = null;
 }
 
 function clearHashState() {
@@ -606,9 +628,9 @@ async function saveTask(taskId, payload) {
   });
 }
 
-async function deleteTask(taskId) {
-  const confirmed = window.confirm('Delete this task?');
-  if (!confirmed) return;
+async function deleteTask() {
+  const taskId = Number(deleteTaskTarget.value?.id);
+  if (!taskId) return;
 
   await withPending(async () => {
     await request(`/api/tasks/${taskId}`, {
@@ -616,6 +638,7 @@ async function deleteTask(taskId) {
       body: JSON.stringify({ workspaceId: workspaceId.value })
     });
     await loadBootstrap();
+    closeDeleteTaskModal();
   });
 }
 
@@ -934,7 +957,7 @@ onBeforeUnmount(() => {
           @create-task="createTask"
           @save-task="saveTask"
           @toggle-task="toggleTask"
-          @delete-task="deleteTask"
+          @delete-task="openDeleteTaskModal"
         />
 
         <GroceryPanel
@@ -946,7 +969,7 @@ onBeforeUnmount(() => {
           @create-task="createTask"
           @save-task="saveTask"
           @toggle-task="toggleTask"
-          @delete-task="deleteTask"
+          @delete-task="openDeleteTaskModal"
         />
 
         <ListSidebar
@@ -959,5 +982,22 @@ onBeforeUnmount(() => {
         />
       </section>
     </template>
+
+    <div v-if="deleteTaskTarget" class="modal-backdrop" @click.self="closeDeleteTaskModal">
+      <section class="panel action-modal">
+        <div>
+          <p class="eyebrow">Delete {{ deleteTaskTarget.kind }}</p>
+          <h2>Delete {{ deleteTaskTarget.title }}?</h2>
+          <p class="subtle">This permanently removes the {{ deleteTaskTarget.kind }} from the current list.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeDeleteTaskModal">Cancel</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="deleteTask">
+            Delete {{ deleteTaskTarget.kind }}
+          </button>
+        </div>
+      </section>
+    </div>
   </main>
 </template>
