@@ -204,9 +204,9 @@ textarea::placeholder {
 
 .app-brand img {
   display: block;
-  height: 64px;
+  height: 100px;
   width: auto;
-  max-width: min(100%, 320px);
+  max-width: min(100%, 400px);
 }
 
 .theme-switch {
@@ -1324,8 +1324,8 @@ textarea {
   }
 
   .app-brand img {
-    height: 52px;
-    max-width: min(100%, 260px);
+    height: 90px;
+    max-width: min(100%, 300px);
   }
 
   .theme-switch {
