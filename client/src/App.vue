@@ -1223,7 +1223,7 @@ onBeforeUnmount(() => {
           <h2>What would you like to do?</h2>
           <p class="subtle">Reset the list for your next trip, or remove the items you already bought.</p>
         </div>
-        <div class="modal-actions">
+        <div class="modal-actions modal-actions-single">
           <button class="ghost-button muted-button" type="button" :disabled="pending" @click="shoppingResetOpen = false">Cancel</button>
           <button class="ghost-button" type="button" :disabled="pending" @click="shoppingReset('clear-checked')">Remove checked items</button>
           <button class="ghost-button" type="button" :disabled="pending" @click="shoppingReset('uncheck')">Uncheck all</button>
