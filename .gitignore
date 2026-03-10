@@ -4,3 +4,4 @@ server/node_modules
 .env
 server/.env
 deploy/pi.env
+CLAUDE.md
