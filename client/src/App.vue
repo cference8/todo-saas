@@ -284,10 +284,6 @@ function closeAccountModal() {
   accountModalOpen.value = false;
 }
 
-function logoutFromAccountModal() {
-  closeAccountModal();
-  clearSession();
-}
 
 function clearHashState() {
   if (!window.location.hash) return;
@@ -1099,16 +1095,26 @@ onBeforeUnmount(() => {
           </div>
           <div class="hero-meta">
             <span class="hero-meta-status">{{ heroStatus }}</span>
-            <button
-              type="button"
-              class="account-summary-button"
-              :disabled="pending"
-              @click="openAccountModal"
-            >
-              <span class="account-summary-eyebrow">Account</span>
-              <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
-              <small>{{ currentUser?.email }}</small>
-            </button>
+            <div class="account-summary-card">
+              <button
+                type="button"
+                class="account-summary-button"
+                :disabled="pending"
+                @click="openAccountModal"
+              >
+                <span class="account-summary-eyebrow">Account</span>
+                <strong>{{ currentUser?.name || 'Unknown user' }}</strong>
+                <small>{{ currentUser?.email }}</small>
+              </button>
+              <div class="account-summary-footer">
+                <button
+                  type="button"
+                  class="account-logout-link"
+                  :disabled="pending"
+                  @click="clearSession"
+                >Logout</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1215,7 +1221,6 @@ onBeforeUnmount(() => {
       :open="accountModalOpen"
       :pending="pending"
       @close="closeAccountModal"
-      @logout="logoutFromAccountModal"
       @update-profile="updateProfile"
     />
 

@@ -486,11 +486,47 @@ textarea::placeholder {
   color: var(--text-soft);
 }
 
-.hero-meta-logout {
-  min-height: 42px;
-  padding: 0 1rem;
-  border-radius: 999px;
-  flex: 0 0 auto;
+.account-summary-card {
+  width: min(100%, 300px);
+  border: 1px solid var(--field-border);
+  border-radius: 22px;
+  background: var(--surface-card);
+  overflow: hidden;
+}
+
+.account-summary-card .account-summary-button {
+  min-width: 0;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.account-summary-footer {
+  border-top: 1px solid var(--field-border);
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.account-logout-link {
+  background: none;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--danger, #e05252);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+
+.account-logout-link:hover {
+  background: color-mix(in srgb, var(--danger, #e05252) 12%, transparent);
+}
+
+.account-logout-link:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .eyebrow {
@@ -2102,6 +2138,10 @@ textarea {
     width: 40px;
     min-height: 40px;
     border-radius: 12px;
+  }
+
+  .account-summary-card {
+    width: 100%;
   }
 
   .account-summary-button {

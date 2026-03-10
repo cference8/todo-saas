@@ -16,7 +16,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close', 'update-profile', 'logout']);
+const emit = defineEmits(['close', 'update-profile']);
 
 const profileForm = reactive({
   name: '',
@@ -263,9 +263,6 @@ onBeforeUnmount(() => {
           <button class="ghost-button" type="submit" :disabled="pending">Save profile</button>
         </div>
 
-        <div class="modal-actions modal-actions-single">
-          <button class="ghost-danger" type="button" :disabled="pending" @click="emit('logout')">Logout</button>
-        </div>
       </form>
     </section>
   </div>
