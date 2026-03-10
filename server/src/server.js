@@ -28,6 +28,7 @@ import {
   deleteList,
   deleteTask,
   ensureMembership,
+  getArchivedWorkspaces,
   getAdminDashboardSnapshot,
   getAuthContext,
   getAuthSession,
@@ -930,6 +931,15 @@ app.post('/api/workspaces/:id/leave', requireAuth, requireAppUser, async (req, r
       defaultWorkspaceId: session.defaultWorkspaceId,
       leftWorkspaceId: workspaceId
     });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/api/workspaces/archived', requireAuth, requireAppUser, async (req, res) => {
+  try {
+    const workspaces = await getArchivedWorkspaces(req.auth.userId);
+    res.json({ workspaces });
   } catch (error) {
     sendError(res, error);
   }

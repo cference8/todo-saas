@@ -45,6 +45,10 @@ const props = defineProps({
   pending: {
     type: Boolean,
     default: false
+  },
+  archivedWorkspaces: {
+    type: Array,
+    default: () => []
   }
 });
 
@@ -53,7 +57,8 @@ const emit = defineEmits([
   'create-workspace',
   'rename-workspace',
   'leave-workspace',
-  'delete-workspace',
+  'archive-workspace',
+  'view-archive',
   'create-invite',
   'copy-invite-link',
   'resend-invite',
@@ -92,7 +97,7 @@ const currentWorkspaceName = computed(() => (
   || 'Workspace'
 ));
 const canRenameWorkspace = computed(() => props.role === 'owner');
-const canDeleteWorkspace = computed(() => props.role === 'owner' && props.memberCount <= 1);
+const canArchiveWorkspace = computed(() => props.role === 'owner' && props.memberCount <= 1);
 const canLeaveWorkspace = computed(() => props.role === 'member' || (props.role === 'owner' && props.memberCount > 1));
 const ownerMustTransfer = computed(() => props.role === 'owner' && props.memberCount > 1 && props.ownerCount < 2);
 const canManageMembers = computed(() => props.role === 'owner');
@@ -120,9 +125,14 @@ function handleLeaveWorkspace() {
   modalError.value = '';
 }
 
-function handleDeleteWorkspace() {
-  modalMode.value = 'delete-workspace';
+function handleArchiveWorkspace() {
+  modalMode.value = 'archive-workspace';
   modalError.value = '';
+}
+
+function handleViewArchive() {
+  emit('view-archive');
+  modalMode.value = 'view-archive';
 }
 
 function closeModal() {
@@ -164,8 +174,8 @@ function confirmLeaveWorkspace() {
   closeModal();
 }
 
-function confirmDeleteWorkspace() {
-  emit('delete-workspace');
+function confirmArchiveWorkspace() {
+  emit('archive-workspace');
   closeModal();
 }
 
@@ -636,14 +646,24 @@ onBeforeUnmount(() => {
           </button>
 
           <button
-            v-else-if="canDeleteWorkspace"
+            v-else-if="canArchiveWorkspace"
             type="button"
             class="workspace-option-card workspace-option-card-danger"
             :disabled="pending"
-            @click="handleDeleteWorkspace"
+            @click="handleArchiveWorkspace"
           >
-            <strong>Delete workspace</strong>
-            <small>Permanently remove the workspace and all of its data.</small>
+            <strong>Archive workspace</strong>
+            <small>Archive this workspace and all of its data.</small>
+          </button>
+
+          <button
+            type="button"
+            class="workspace-option-card"
+            :disabled="pending"
+            @click="handleViewArchive"
+          >
+            <strong>View archive</strong>
+            <small>Browse your archived workspaces.</small>
           </button>
         </div>
 
@@ -753,16 +773,37 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <template v-else-if="modalMode === 'delete-workspace'">
+      <template v-else-if="modalMode === 'archive-workspace'">
         <div>
-          <p class="eyebrow">Delete workspace</p>
-          <h2>Delete {{ currentWorkspaceName }}?</h2>
-          <p class="subtle">This permanently removes all lists, tasks, invites, and member access for this workspace.</p>
+          <p class="eyebrow">Archive workspace</p>
+          <h2>Archive {{ currentWorkspaceName }}?</h2>
+          <p class="subtle">This workspace will be archived and hidden from your workspace list. You can view it later in the archive.</p>
         </div>
 
         <div class="modal-actions">
           <button class="ghost-button muted-button" type="button" :disabled="pending" @click="closeModal">Cancel</button>
-          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmDeleteWorkspace">Delete workspace</button>
+          <button class="ghost-danger" type="button" :disabled="pending" @click="confirmArchiveWorkspace">Archive workspace</button>
+        </div>
+      </template>
+
+      <template v-else-if="modalMode === 'view-archive'">
+        <div>
+          <p class="eyebrow">Archive</p>
+          <h2>Archived workspaces</h2>
+        </div>
+
+        <div v-if="archivedWorkspaces.length" class="member-list">
+          <div v-for="w in archivedWorkspaces" :key="w.id" class="member-row">
+            <span>
+              <strong>{{ w.name }}</strong>
+              <small class="subtle">Archived {{ new Date(w.deletedAt).toLocaleDateString() }}</small>
+            </span>
+          </div>
+        </div>
+        <p v-else class="subtle">No archived workspaces.</p>
+
+        <div class="modal-actions modal-actions-single">
+          <button class="ghost-button muted-button" type="button" @click="closeModal">Close</button>
         </div>
       </template>
     </section>

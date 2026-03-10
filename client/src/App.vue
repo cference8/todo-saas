@@ -683,7 +683,7 @@ async function leaveWorkspace() {
   });
 }
 
-async function deleteWorkspace() {
+async function archiveWorkspace() {
   const activeWorkspaceId = Number(workspaceId.value);
   const activeWorkspaceName = workspace.value?.name || 'this workspace';
   if (!activeWorkspaceId) return;
@@ -697,9 +697,16 @@ async function deleteWorkspace() {
     await applyWorkspaceMembershipUpdate({
       workspaces: response.workspaces || [],
       preferredWorkspaceId: response.defaultWorkspaceId || 0,
-      statusMessage: `${activeWorkspaceName} was deleted.`
+      statusMessage: `${activeWorkspaceName} was archived.`
     });
   });
+}
+
+const archivedWorkspaces = ref([]);
+
+async function fetchArchivedWorkspaces() {
+  const response = await request('/api/workspaces/archived');
+  archivedWorkspaces.value = response.workspaces || [];
 }
 
 async function promoteMember(member, onCompleted) {
@@ -1131,7 +1138,9 @@ onBeforeUnmount(() => {
             @cancel-invite="cancelInvite"
             @copy-invite-link="copyInviteLink"
             @create-workspace="createWorkspace"
-            @delete-workspace="deleteWorkspace"
+            @archive-workspace="archiveWorkspace"
+            @view-archive="fetchArchivedWorkspaces"
+            :archived-workspaces="archivedWorkspaces"
             @leave-workspace="leaveWorkspace"
             @promote-member="promoteMember"
             @rename-workspace="renameWorkspace"

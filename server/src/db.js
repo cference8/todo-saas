@@ -1204,6 +1204,19 @@ export async function getUserWorkspaces(userId) {
   return result.rows;
 }
 
+export async function getArchivedWorkspaces(userId) {
+  const result = await pool.query(
+    `SELECT w.id, w.name, w.deleted_at AS "deletedAt"
+     FROM workspaces w
+     JOIN workspace_members wm ON wm.workspace_id = w.id
+     WHERE wm.user_id = $1
+       AND w.deleted_at IS NOT NULL
+     ORDER BY w.deleted_at DESC`,
+    [userId]
+  );
+  return result.rows;
+}
+
 export async function createWorkspace({ userId, name }) {
   const workspaceName = String(name || '').trim();
   if (!workspaceName) {
