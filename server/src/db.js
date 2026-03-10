@@ -206,6 +206,9 @@ export async function initDb() {
     WHERE site_role NOT IN ('USER', 'SUPER_ADMIN');
     UPDATE lists SET type = 'task' WHERE type IS NULL OR type NOT IN ('task', 'grocery');
     UPDATE tasks SET priority = 'medium' WHERE priority IS NULL OR priority NOT IN ('low', 'medium', 'high');
+    ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE lists ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
   `);
 
   await pool.query(`
@@ -418,17 +421,17 @@ export async function getAdminDashboardSnapshot() {
       `SELECT
          (SELECT COUNT(*)::integer FROM users) AS "totalUsers",
          (SELECT COUNT(*)::integer FROM users WHERE site_role = 'SUPER_ADMIN') AS "totalSuperAdmins",
-         (SELECT COUNT(*)::integer FROM workspaces) AS "totalWorkspaces",
-         (SELECT COUNT(*)::integer FROM lists) AS "totalLists",
-         (SELECT COUNT(*)::integer FROM tasks) AS "totalTasks",
-         (SELECT COUNT(*)::integer FROM tasks WHERE completed_at IS NOT NULL) AS "completedTasks",
-         (SELECT COUNT(*)::integer FROM tasks WHERE completed_at IS NULL) AS "openTasks",
+         (SELECT COUNT(*)::integer FROM workspaces WHERE deleted_at IS NULL) AS "totalWorkspaces",
+         (SELECT COUNT(*)::integer FROM lists WHERE deleted_at IS NULL) AS "totalLists",
+         (SELECT COUNT(*)::integer FROM tasks WHERE deleted_at IS NULL) AS "totalTasks",
+         (SELECT COUNT(*)::integer FROM tasks WHERE completed_at IS NOT NULL AND deleted_at IS NULL) AS "completedTasks",
+         (SELECT COUNT(*)::integer FROM tasks WHERE completed_at IS NULL AND deleted_at IS NULL) AS "openTasks",
          (SELECT COUNT(*)::integer
           FROM workspace_invites
           WHERE accepted_at IS NULL
             AND expires_at > NOW()) AS "pendingInvites",
          (SELECT COUNT(*)::integer FROM users WHERE created_at >= NOW() - INTERVAL '7 days') AS "newUsers7d",
-         (SELECT COUNT(*)::integer FROM workspaces WHERE created_at >= NOW() - INTERVAL '7 days') AS "newWorkspaces7d",
+         (SELECT COUNT(*)::integer FROM workspaces WHERE created_at >= NOW() - INTERVAL '7 days' AND deleted_at IS NULL) AS "newWorkspaces7d",
          (SELECT COUNT(*)::integer FROM users WHERE last_login_at >= NOW() - INTERVAL '7 days') AS "logins7d",
          (SELECT COUNT(*)::integer FROM users WHERE last_active_at >= NOW() - INTERVAL '1 day') AS "activeUsers24h",
          (SELECT COUNT(*)::integer FROM users WHERE last_active_at >= NOW() - INTERVAL '7 days') AS "activeUsers7d",
@@ -485,6 +488,7 @@ export async function getAdminDashboardSnapshot() {
                 COUNT(*) AS new_workspaces
          FROM workspaces
          WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
+           AND deleted_at IS NULL
          GROUP BY DATE(created_at)
        ) workspaces ON workspaces.day = DATE(day_series.day)
        ORDER BY day_series.day ASC`
@@ -516,7 +520,7 @@ export async function getAdminDashboardSnapshot() {
                 COUNT(*) AS task_count,
                 COUNT(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_task_count
          FROM tasks
-         WHERE created_by_user_id IS NOT NULL
+         WHERE created_by_user_id IS NOT NULL AND deleted_at IS NULL
          GROUP BY created_by_user_id
        ) task_counts ON task_counts.user_id = u.id
        LEFT JOIN (
@@ -556,6 +560,7 @@ export async function getAdminDashboardSnapshot() {
          SELECT workspace_id,
                 COUNT(*) AS list_count
          FROM lists
+         WHERE deleted_at IS NULL
          GROUP BY workspace_id
        ) list_counts ON list_counts.workspace_id = w.id
        LEFT JOIN (
@@ -563,8 +568,10 @@ export async function getAdminDashboardSnapshot() {
                 COUNT(*) AS task_count,
                 COUNT(*) FILTER (WHERE completed_at IS NOT NULL) AS completed_task_count
          FROM tasks
+         WHERE deleted_at IS NULL
          GROUP BY workspace_id
        ) task_counts ON task_counts.workspace_id = w.id
+       WHERE w.deleted_at IS NULL
        ORDER BY
          COALESCE(task_counts.task_count, 0) DESC,
          COALESCE(member_counts.member_count, 0) DESC,
@@ -1190,6 +1197,7 @@ export async function getUserWorkspaces(userId) {
      FROM workspaces w
      JOIN workspace_members wm ON wm.workspace_id = w.id
      WHERE wm.user_id = $1
+       AND w.deleted_at IS NULL
      ORDER BY w.id ASC`,
     [userId]
   );
@@ -1495,6 +1503,7 @@ export async function deleteWorkspace({ workspaceId, actorUserId }) {
        FROM workspace_members wm
        JOIN workspaces w ON w.id = wm.workspace_id
        WHERE wm.workspace_id = $1 AND wm.user_id = $2
+         AND w.deleted_at IS NULL
        FOR UPDATE`,
       [workspaceId, actorUserId]
     );
@@ -1528,8 +1537,9 @@ export async function deleteWorkspace({ workspaceId, actorUserId }) {
     }
 
     const deleteResult = await client.query(
-      `DELETE FROM workspaces
-       WHERE id = $1
+      `UPDATE workspaces
+       SET deleted_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL
        RETURNING id, name`,
       [workspaceId]
     );
@@ -1612,7 +1622,8 @@ export async function ensureMembership(userId, workspaceId) {
     `SELECT wm.role, w.name, w.slug
      FROM workspace_members wm
      JOIN workspaces w ON w.id = wm.workspace_id
-     WHERE wm.user_id = $1 AND wm.workspace_id = $2`,
+     WHERE wm.user_id = $1 AND wm.workspace_id = $2
+       AND w.deleted_at IS NULL`,
     [userId, workspaceId]
   );
 
@@ -1631,7 +1642,7 @@ export async function getSnapshot({ userId, workspaceId }) {
     pool.query(
       `SELECT id, name, slug, created_at AS "createdAt"
        FROM workspaces
-       WHERE id = $1`,
+       WHERE id = $1 AND deleted_at IS NULL`,
       [workspaceId]
     ),
     getCurrentUserProfile(userId),
@@ -1642,8 +1653,9 @@ export async function getSnapshot({ userId, workspaceId }) {
               COUNT(t.id)::int AS "taskCount",
               COALESCE(SUM(CASE WHEN t.completed_at IS NULL AND t.id IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS "openCount"
        FROM lists l
-       LEFT JOIN tasks t ON t.list_id = l.id
+       LEFT JOIN tasks t ON t.list_id = l.id AND t.deleted_at IS NULL
        WHERE l.workspace_id = $1
+         AND l.deleted_at IS NULL
        GROUP BY l.id
        ORDER BY l.id DESC`,
       [workspaceId]
@@ -1664,6 +1676,7 @@ export async function getSnapshot({ userId, workspaceId }) {
        LEFT JOIN users creator ON creator.id = t.created_by_user_id
        LEFT JOIN users completer ON completer.id = t.completed_by_user_id
        WHERE t.workspace_id = $1
+         AND t.deleted_at IS NULL
        ORDER BY t.id DESC`,
       [workspaceId]
     ),
@@ -1711,12 +1724,15 @@ export async function createList({ workspaceId, userId, name, type = 'task' }) {
 }
 
 export async function deleteList({ workspaceId, listId }) {
-  const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM lists WHERE workspace_id = $1', [workspaceId]);
+  const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM lists WHERE workspace_id = $1 AND deleted_at IS NULL', [workspaceId]);
   if (countResult.rows[0].count <= 1) {
     return { ok: false, reason: 'last-list' };
   }
 
-  const result = await pool.query('DELETE FROM lists WHERE id = $1 AND workspace_id = $2', [listId, workspaceId]);
+  const result = await pool.query(
+    'UPDATE lists SET deleted_at = NOW() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL',
+    [listId, workspaceId]
+  );
   return result.rowCount ? { ok: true } : { ok: false, reason: 'not-found' };
 }
 
@@ -1731,7 +1747,7 @@ export async function createTask({
   priority = 'medium'
 }) {
   const list = await pool.query(
-    'SELECT id, type FROM lists WHERE id = $1 AND workspace_id = $2',
+    'SELECT id, type FROM lists WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL',
     [listId, workspaceId]
   );
   if (!list.rowCount) return null;
@@ -1769,8 +1785,8 @@ export async function updateTask({
   const listResult = await pool.query(
     `SELECT l.type
      FROM tasks t
-     JOIN lists l ON l.id = t.list_id
-     WHERE t.id = $1 AND t.workspace_id = $2`,
+     JOIN lists l ON l.id = t.list_id AND l.deleted_at IS NULL
+     WHERE t.id = $1 AND t.workspace_id = $2 AND t.deleted_at IS NULL`,
     [taskId, workspaceId]
   );
 
@@ -1819,7 +1835,10 @@ export async function updateTask({
 }
 
 export async function deleteTask({ workspaceId, taskId }) {
-  const result = await pool.query('DELETE FROM tasks WHERE id = $1 AND workspace_id = $2', [taskId, workspaceId]);
+  const result = await pool.query(
+    'UPDATE tasks SET deleted_at = NOW() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL',
+    [taskId, workspaceId]
+  );
   return result.rowCount > 0;
 }
 
