@@ -68,6 +68,9 @@ const activeTasks = computed(() => {
     .sort((a, b) => {
       const completionOrder = Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt));
       if (completionOrder !== 0) return completionOrder;
+      if (a.completedAt && b.completedAt) {
+        return new Date(b.completedAt) - new Date(a.completedAt);
+      }
 
       if (activeList.value?.type === 'grocery') {
         return b.id - a.id;
