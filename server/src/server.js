@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import geoip from 'geoip-lite';
 import { WebSocketServer } from 'ws';
 import { buildAppleAuthUrl, exchangeAppleCode, isAppleAuthEnabled, parseAppleUserProfile } from './apple-oauth.js';
@@ -67,6 +68,9 @@ const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const socketGroups = new Map();
 const userWorkspaceSockets = new Map();
 const PASSWORD_RESET_REQUEST_NOTICE = 'If an account exists for that email, a password link will arrive shortly.';
+
+const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
+const inviteTokenRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
 
 app.set('trust proxy', true);
 app.use(cors({ origin: clientOrigin, credentials: true }));
@@ -649,7 +653,7 @@ app.get('/api/auth/providers', (_req, res) => {
   });
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authRateLimit, async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
     const email = String(req.body.email || '').trim();
@@ -693,7 +697,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/password-reset/request', async (req, res) => {
+app.post('/api/auth/password-reset/request', authRateLimit, async (req, res) => {
   try {
     const email = String(req.body.email || '').trim();
     if (!email) {
@@ -990,7 +994,7 @@ app.delete('/api/workspaces/:id', requireAuth, requireAppUser, async (req, res) 
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimit, async (req, res) => {
   try {
     const email = String(req.body.email || '').trim();
     const password = String(req.body.password || '');
@@ -1276,7 +1280,7 @@ app.get('/api/bootstrap', requireAuth, requireAppUser, async (req, res) => {
   }
 });
 
-app.get('/api/invites/:token', async (req, res) => {
+app.get('/api/invites/:token', inviteTokenRateLimit, async (req, res) => {
   try {
     const invite = await getInviteByToken(String(req.params.token || ''));
     if (!invite) {
@@ -1302,7 +1306,7 @@ app.get('/api/invites/:token', async (req, res) => {
 
 app.post('/api/invites', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
-    if (!['owner', 'member'].includes(req.membership.role)) {
+    if (req.membership.role !== 'owner') {
       res.status(403).json({ error: 'You do not have permission to create invites in this workspace.' });
       return;
     }
@@ -1335,7 +1339,7 @@ app.post('/api/invites', requireAuth, requireAppUser, requireWorkspace, async (r
 
 app.post('/api/invites/:id/resend', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
-    if (!['owner', 'member'].includes(req.membership.role)) {
+    if (req.membership.role !== 'owner') {
       res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
       return;
     }
@@ -1366,7 +1370,7 @@ app.post('/api/invites/:id/resend', requireAuth, requireAppUser, requireWorkspac
 
 app.post('/api/invites/:id/link', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
-    if (!['owner', 'member'].includes(req.membership.role)) {
+    if (req.membership.role !== 'owner') {
       res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
       return;
     }
@@ -1394,7 +1398,7 @@ app.post('/api/invites/:id/link', requireAuth, requireAppUser, requireWorkspace,
 
 app.delete('/api/invites/:id', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
   try {
-    if (!['owner', 'member'].includes(req.membership.role)) {
+    if (req.membership.role !== 'owner') {
       res.status(403).json({ error: 'You do not have permission to manage invites in this workspace.' });
       return;
     }
