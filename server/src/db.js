@@ -1855,6 +1855,26 @@ export async function deleteTask({ workspaceId, taskId }) {
   return result.rowCount > 0;
 }
 
+export async function uncheckAllGroceryItems({ workspaceId, listId }) {
+  const result = await pool.query(
+    `UPDATE tasks
+     SET completed_at = NULL, completed_by_user_id = NULL
+     WHERE list_id = $1 AND workspace_id = $2 AND deleted_at IS NULL AND completed_at IS NOT NULL`,
+    [listId, workspaceId]
+  );
+  return result.rowCount;
+}
+
+export async function clearCheckedGroceryItems({ workspaceId, listId }) {
+  const result = await pool.query(
+    `UPDATE tasks
+     SET deleted_at = NOW()
+     WHERE list_id = $1 AND workspace_id = $2 AND deleted_at IS NULL AND completed_at IS NOT NULL`,
+    [listId, workspaceId]
+  );
+  return result.rowCount;
+}
+
 export async function addWorkspaceMember({ workspaceId, email, role = 'member' }) {
   const userResult = await pool.query('SELECT id, name, email FROM users WHERE email = $1', [email.toLowerCase()]);
   if (!userResult.rowCount) {

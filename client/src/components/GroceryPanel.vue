@@ -20,7 +20,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['create-task', 'save-task', 'show-lists', 'toggle-task', 'delete-task']);
+const emit = defineEmits(['create-task', 'save-task', 'show-lists', 'toggle-task', 'delete-task', 'shopping-complete']);
 
 const draft = reactive({
   title: '',
@@ -104,6 +104,13 @@ function submitEdit(taskId) {
         <div class="status-pill" :class="socketState">
           {{ socketState === 'open' ? 'Realtime connected' : socketState === 'connecting' ? 'Connecting' : 'Offline sync' }}
         </div>
+        <button
+          v-if="tasks.some(t => t.completedAt)"
+          type="button"
+          class="ghost-button"
+          :disabled="pending"
+          @click="emit('shopping-complete')"
+        >New shopping trip</button>
         <button type="button" class="ghost-button muted-button mobile-list-jump" @click="emit('show-lists')">Select different list</button>
       </div>
     </header>

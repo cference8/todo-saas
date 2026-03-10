@@ -44,6 +44,7 @@ const pendingInvites = ref([]);
 const revokedWorkspaceId = ref(0);
 const noWorkspaceName = ref('');
 const deleteTaskTarget = ref(null);
+const shoppingResetOpen = ref(false);
 const accountModalOpen = ref(false);
 const boardPanelRef = ref(null);
 const listPanelRef = ref(null);
@@ -801,6 +802,19 @@ async function deleteTask() {
   });
 }
 
+async function shoppingReset(action) {
+  const listId = activeListId.value;
+  if (!listId) return;
+  await withPending(async () => {
+    await request(`/api/lists/${listId}/shopping-reset`, {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId: workspaceId.value, action })
+    });
+    await loadBootstrap();
+    shoppingResetOpen.value = false;
+  });
+}
+
 async function createInvite(email, onCreated, onFailed) {
   pending.value = true;
   errorMessage.value = '';
@@ -1175,6 +1189,7 @@ onBeforeUnmount(() => {
               @show-lists="scrollToLists"
               @toggle-task="toggleTask"
               @delete-task="openDeleteTaskModal"
+              @shopping-complete="shoppingResetOpen = true"
             />
           </div>
 
@@ -1200,6 +1215,21 @@ onBeforeUnmount(() => {
       @logout="logoutFromAccountModal"
       @update-profile="updateProfile"
     />
+
+    <div v-if="shoppingResetOpen" class="modal-backdrop" @click.self="shoppingResetOpen = false">
+      <section class="panel action-modal">
+        <div>
+          <p class="eyebrow">New shopping trip</p>
+          <h2>What would you like to do?</h2>
+          <p class="subtle">Reset the list for your next trip, or remove the items you already bought.</p>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-button muted-button" type="button" :disabled="pending" @click="shoppingResetOpen = false">Cancel</button>
+          <button class="ghost-button" type="button" :disabled="pending" @click="shoppingReset('clear-checked')">Remove checked items</button>
+          <button class="ghost-button" type="button" :disabled="pending" @click="shoppingReset('uncheck')">Uncheck all</button>
+        </div>
+      </section>
+    </div>
 
     <div v-if="deleteTaskTarget" class="modal-backdrop" @click.self="closeDeleteTaskModal">
       <section class="panel action-modal">

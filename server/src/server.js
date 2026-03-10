@@ -47,7 +47,9 @@ import {
   resendWorkspaceInvite,
   resetPasswordWithToken,
   updateUserProfile,
-  updateTask
+  updateTask,
+  uncheckAllGroceryItems,
+  clearCheckedGroceryItems
 } from './db.js';
 
 const app = express();
@@ -1710,6 +1712,42 @@ app.patch('/api/tasks/:id', requireAuth, requireAppUser, requireWorkspace, async
         quantityProvided: hasOwn('quantity')
       }
     });
+    res.status(204).end();
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/lists/:listId/shopping-reset', requireAuth, requireAppUser, requireWorkspace, async (req, res) => {
+  try {
+    const listId = Number(req.params.listId);
+    const action = req.body.action;
+    if (!['uncheck', 'clear-checked'].includes(action)) {
+      res.status(400).json({ error: 'action must be "uncheck" or "clear-checked".' });
+      return;
+    }
+
+    if (action === 'uncheck') {
+      await uncheckAllGroceryItems({ workspaceId: req.workspaceId, listId });
+      logAuditEvent({
+        actorUserId: req.auth.userId,
+        eventType: 'list.shopping_reset_uncheck',
+        targetType: 'list',
+        targetId: listId,
+        workspaceId: req.workspaceId
+      });
+    } else {
+      await clearCheckedGroceryItems({ workspaceId: req.workspaceId, listId });
+      logAuditEvent({
+        actorUserId: req.auth.userId,
+        eventType: 'list.shopping_reset_clear',
+        targetType: 'list',
+        targetId: listId,
+        workspaceId: req.workspaceId
+      });
+    }
+
+    broadcastToWorkspace(req.workspaceId, 'list.shoppingReset', { listId, action });
     res.status(204).end();
   } catch (error) {
     sendError(res, error);
