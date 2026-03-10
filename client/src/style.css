@@ -1077,6 +1077,34 @@ textarea {
   cursor: default;
 }
 
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.password-strength-bar {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.password-strength-segment {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--field-border);
+  transition: background 0.25s ease;
+}
+
+.password-strength-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-width: 3.5rem;
+  text-align: right;
+  transition: color 0.25s ease;
+}
+
 .auth-submit-button {
   min-height: 52px;
 }

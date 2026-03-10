@@ -66,6 +66,22 @@ const form = reactive({
 
 const errorMode = ref('');
 const showPassword = ref(false);
+
+const passwordStrength = computed(() => {
+  const p = form.password;
+  if (!p) return { score: 0, label: '', color: '' };
+  let score = 0;
+  if (p.length >= 8) score++;
+  if (p.length >= 12) score++;
+  if (/[A-Z]/.test(p)) score++;
+  if (/[0-9]/.test(p)) score++;
+  if (/[^A-Za-z0-9]/.test(p)) score++;
+  if (score <= 1) return { score: 1, label: 'Weak', color: 'var(--danger, #e05252)' };
+  if (score === 2) return { score: 2, label: 'Fair', color: '#e09a28' };
+  if (score === 3) return { score: 3, label: 'Good', color: '#4caf7d' };
+  return { score: 4, label: 'Strong', color: '#2196a8' };
+});
+const showPasswordStrength = computed(() => (isRegisterMode.value || isResetPasswordMode.value) && form.password.length > 0);
 const lastSuggestedWorkspaceName = ref('');
 const isLoginMode = computed(() => mode.value === LOGIN_MODE);
 const isRegisterMode = computed(() => mode.value === REGISTER_MODE);
@@ -256,15 +272,6 @@ function submit() {
       return;
     }
 
-    if (!form.confirmPassword) {
-      emitValidationError('Please retype your password.', REGISTER_MODE);
-      return;
-    }
-
-    if (form.password !== form.confirmPassword) {
-      emitValidationError('Passwords do not match.', REGISTER_MODE);
-      return;
-    }
   }
 
   emit('submit', {
@@ -281,11 +288,10 @@ function submit() {
 <template>
   <section class="auth-shell panel">
     <div class="auth-copy">
-      <p class="eyebrow">Realtime team workspace</p>
-      <h1>Vue + Postgres + WebSockets</h1>
+      <p class="eyebrow">Task management, simplified</p>
+      <h1>Get your team on the same page</h1>
       <p>
-        Sign in to your workspace or create a new one. The backend now owns auth,
-        membership, and realtime updates instead of Firebase.
+        Tasked keeps your team's work organized and in sync — manage tasks, grocery runs, and shared lists all in one place.
       </p>
       <p v-if="invite" class="invite-banner">
         Invitation for <strong>{{ invite.email }}</strong> to join <strong>{{ invite.workspaceName }}</strong>.
@@ -294,8 +300,8 @@ function submit() {
 
     <div class="auth-card">
       <div v-if="showAuthToggle" class="auth-toggle">
-        <button type="button" :class="{ active: mode === LOGIN_MODE }" @click="mode = LOGIN_MODE">Login</button>
-        <button type="button" :class="{ active: mode === REGISTER_MODE }" @click="mode = REGISTER_MODE">Register</button>
+        <button type="button" :class="{ active: mode === LOGIN_MODE }" @click="mode = LOGIN_MODE">Sign in</button>
+        <button type="button" :class="{ active: mode === REGISTER_MODE }" @click="mode = REGISTER_MODE">Sign up</button>
       </div>
       <div v-else class="auth-mode-header">
         <p class="eyebrow">{{ isResetPasswordMode ? 'Choose a new password' : 'Reset your password' }}</p>
@@ -359,6 +365,7 @@ function submit() {
             :placeholder="passwordPlaceholder"
             :disabled="pending"
             :autocomplete="isLoginMode ? 'current-password' : 'new-password'"
+            :minlength="isLoginMode ? undefined : 8"
             required
           />
           <button
@@ -372,10 +379,21 @@ function submit() {
             {{ showPassword ? 'Hide' : 'Show' }}
           </button>
         </div>
+        <div v-if="showPasswordStrength" class="password-strength">
+          <div class="password-strength-bar">
+            <div
+              v-for="i in 4"
+              :key="i"
+              class="password-strength-segment"
+              :style="{ background: i <= passwordStrength.score ? passwordStrength.color : undefined }"
+            />
+          </div>
+          <span class="password-strength-label" :style="{ color: passwordStrength.color }">{{ passwordStrength.label }}</span>
+        </div>
         <div v-if="isLoginMode" class="auth-inline-actions">
           <button type="button" class="auth-link-button" :disabled="pending" @click="openForgotPassword">Forgot Password?</button>
         </div>
-        <div v-if="isRegisterMode || isResetPasswordMode" class="auth-password-field">
+        <div v-if="isResetPasswordMode" class="auth-password-field auth-password-field-with-toggle">
           <input
             v-model="form.confirmPassword"
             :type="showPassword ? 'text' : 'password'"
@@ -384,6 +402,16 @@ function submit() {
             autocomplete="new-password"
             required
           />
+          <button
+            type="button"
+            class="auth-password-toggle"
+            :aria-label="showPassword ? 'Hide password' : 'Show password'"
+            :aria-pressed="showPassword"
+            :disabled="pending"
+            @click="showPassword = !showPassword"
+          >
+            {{ showPassword ? 'Hide' : 'Show' }}
+          </button>
         </div>
         <input
           v-if="isRegisterMode && !invite"
