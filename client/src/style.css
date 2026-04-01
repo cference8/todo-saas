@@ -2233,3 +2233,14 @@ textarea {
     min-height: 48px;
   }
 }
+
+/* Prevent iOS Safari from auto-zooming on input focus.
+   Any input with font-size < 16px triggers a zoom; this overrides that
+   at mobile widths without disabling user pinch-to-zoom. */
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
