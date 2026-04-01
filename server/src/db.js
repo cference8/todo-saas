@@ -308,6 +308,35 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_system_error_logs_source ON system_error_logs(source);
     CREATE INDEX IF NOT EXISTS idx_system_error_logs_user_id ON system_error_logs(user_id);
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspace_chat_messages (
+      id BIGSERIAL PRIMARY KEY,
+      workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      list_id BIGINT REFERENCES lists(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_workspace_created ON workspace_chat_messages(workspace_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+  `);
 }
 
 export async function getAuthContext(userId) {
@@ -2333,4 +2362,142 @@ async function getInviteRecordForRegistration(client, inviteToken) {
   }
 
   return invite;
+}
+
+export async function createChatMessage({ workspaceId, userId, text, listId = null }) {
+  const result = await pool.query(
+    `INSERT INTO workspace_chat_messages (workspace_id, user_id, text, list_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, workspace_id AS "workspaceId", user_id AS "userId", text, list_id AS "listId", created_at AS "createdAt"`,
+    [workspaceId, userId, text.trim(), listId || null]
+  );
+
+  const message = result.rows[0];
+
+  const userResult = await pool.query(
+    `SELECT id, name FROM users WHERE id = $1`,
+    [userId]
+  );
+  const user = userResult.rows[0];
+
+  let list = null;
+  if (listId) {
+    const listResult = await pool.query(
+      `SELECT id, name FROM lists WHERE id = $1 AND deleted_at IS NULL`,
+      [listId]
+    );
+    list = listResult.rows[0] || null;
+  }
+
+  return {
+    id: message.id,
+    workspaceId: message.workspaceId,
+    userId: message.userId,
+    text: message.text,
+    listId: message.listId,
+    listName: list?.name || null,
+    createdAt: message.createdAt,
+    userName: user?.name || 'Unknown',
+  };
+}
+
+export async function getChatMessages({ workspaceId, before = null, limit = 50 }) {
+  const safeLimit = Math.min(Number(limit) || 50, 100);
+  let rows;
+
+  if (before) {
+    const result = await pool.query(
+      `SELECT m.id,
+              m.workspace_id AS "workspaceId",
+              m.user_id AS "userId",
+              m.text,
+              m.list_id AS "listId",
+              m.created_at AS "createdAt",
+              u.name AS "userName",
+              l.name AS "listName"
+       FROM workspace_chat_messages m
+       JOIN users u ON u.id = m.user_id
+       LEFT JOIN lists l ON l.id = m.list_id AND l.deleted_at IS NULL
+       WHERE m.workspace_id = $1
+         AND m.id < $2
+       ORDER BY m.id DESC
+       LIMIT $3`,
+      [workspaceId, before, safeLimit]
+    );
+    rows = result.rows;
+  } else {
+    const result = await pool.query(
+      `SELECT m.id,
+              m.workspace_id AS "workspaceId",
+              m.user_id AS "userId",
+              m.text,
+              m.list_id AS "listId",
+              m.created_at AS "createdAt",
+              u.name AS "userName",
+              l.name AS "listName"
+       FROM workspace_chat_messages m
+       JOIN users u ON u.id = m.user_id
+       LEFT JOIN lists l ON l.id = m.list_id AND l.deleted_at IS NULL
+       WHERE m.workspace_id = $1
+       ORDER BY m.id DESC
+       LIMIT $2`,
+      [workspaceId, safeLimit]
+    );
+    rows = result.rows;
+  }
+
+  return rows.reverse();
+}
+
+export async function savePushSubscription({ userId, endpoint, p256dh, auth }) {
+  await pool.query(
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (endpoint) DO UPDATE
+       SET user_id = EXCLUDED.user_id,
+           p256dh = EXCLUDED.p256dh,
+           auth = EXCLUDED.auth`,
+    [userId, endpoint, p256dh, auth]
+  );
+}
+
+export async function deletePushSubscription(endpoint) {
+  await pool.query(
+    `DELETE FROM push_subscriptions WHERE endpoint = $1`,
+    [endpoint]
+  );
+}
+
+export async function getPushSubscriptionsForWorkspace({ workspaceId, excludeUserId = null }) {
+  const result = await pool.query(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth, ps.user_id AS "userId"
+     FROM push_subscriptions ps
+     JOIN workspace_members wm ON wm.user_id = ps.user_id
+     WHERE wm.workspace_id = $1
+       AND ($2::bigint IS NULL OR ps.user_id <> $2)`,
+    [workspaceId, excludeUserId || null]
+  );
+
+  return result.rows;
+}
+
+export async function getOrCreateVapidKeys() {
+  const result = await pool.query(
+    `SELECT value FROM app_settings WHERE key = 'vapid_keys'`
+  );
+
+  if (result.rows[0]) {
+    return JSON.parse(result.rows[0].value);
+  }
+
+  const webpush = await import('web-push');
+  const keys = webpush.default.generateVAPIDKeys();
+
+  await pool.query(
+    `INSERT INTO app_settings (key, value) VALUES ('vapid_keys', $1)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(keys)]
+  );
+
+  return keys;
 }

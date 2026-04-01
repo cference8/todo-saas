@@ -14,12 +14,14 @@ import { issueAuthToken, issueOAuthState, verifyAuthToken, verifyOAuthState } fr
 import { buildGoogleAuthUrl, exchangeGoogleCode, isGoogleAuthEnabled } from './google-oauth.js';
 import { getInviteEmailStatus, sendWorkspaceInviteEmail } from './invite-email.js';
 import { sendPasswordResetEmail } from './password-reset-email.js';
+import webpush from 'web-push';
 import {
   acceptInviteForUser,
   authenticateWithApple,
   authenticateWithGoogle,
   authenticateUser,
   cancelWorkspaceInvite,
+  createChatMessage,
   createPasswordResetRequest,
   createWorkspace,
   createList,
@@ -28,13 +30,17 @@ import {
   deleteWorkspace,
   deleteList,
   deleteTask,
+  deletePushSubscription,
   ensureMembership,
   getArchivedWorkspaces,
   getAdminDashboardSnapshot,
   getAuthContext,
   getAuthSession,
+  getChatMessages,
   getInviteByToken,
   getWorkspaceInviteLink,
+  getOrCreateVapidKeys,
+  getPushSubscriptionsForWorkspace,
   getSnapshot,
   initDb,
   leaveWorkspace,
@@ -47,6 +53,7 @@ import {
   registerUser,
   resendWorkspaceInvite,
   resetPasswordWithToken,
+  savePushSubscription,
   updateUserProfile,
   updateTask,
   uncheckAllGroceryItems,
@@ -71,6 +78,9 @@ const PASSWORD_RESET_REQUEST_NOTICE = 'If an account exists for that email, a pa
 
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 const inviteTokenRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+const chatRateLimit = rateLimit({ windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false });
+
+let vapidPublicKey = null;
 
 app.set('trust proxy', true);
 app.use(cors({ origin: clientOrigin, credentials: true }));
@@ -1780,6 +1790,107 @@ app.delete('/api/tasks/:id', requireAuth, requireAppUser, requireWorkspace, asyn
   }
 });
 
+// Chat routes
+app.get('/api/workspaces/:id/chat', requireAuth, requireAppUser, async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const membership = await ensureMembership(req.auth.userId, workspaceId);
+    if (!membership) return res.status(403).json({ error: 'Access denied.' });
+
+    const before = req.query.before ? Number(req.query.before) : null;
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const messages = await getChatMessages({ workspaceId, before, limit });
+    res.json({ messages });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post('/api/workspaces/:id/chat', chatRateLimit, requireAuth, requireAppUser, async (req, res) => {
+  try {
+    const workspaceId = Number(req.params.id);
+    const membership = await ensureMembership(req.auth.userId, workspaceId);
+    if (!membership) return res.status(403).json({ error: 'Access denied.' });
+
+    const text = String(req.body.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Message text is required.' });
+    if (text.length > 2000) return res.status(400).json({ error: 'Message too long.' });
+
+    const listId = req.body.listId ? Number(req.body.listId) : null;
+
+    const message = await createChatMessage({ workspaceId, userId: req.auth.userId, text, listId });
+
+    broadcastToWorkspace(workspaceId, 'chat.message', { message });
+
+    // Send web push to workspace members who are subscribed
+    if (vapidPublicKey) {
+      const subscriptions = await getPushSubscriptionsForWorkspace({
+        workspaceId,
+        excludeUserId: req.auth.userId
+      });
+
+      const payload = JSON.stringify({
+        title: `${message.userName} in ${message.listName ? `#${message.listName}` : 'Team Chat'}`,
+        body: text.length > 100 ? `${text.slice(0, 100)}…` : text,
+        workspaceId
+      });
+
+      for (const sub of subscriptions) {
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          payload
+        ).catch((err) => {
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            deletePushSubscription(sub.endpoint).catch(() => {});
+          }
+        });
+      }
+    }
+
+    res.status(201).json({ message });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// Push notification routes
+app.get('/api/push/vapid-public-key', requireAuth, (req, res) => {
+  if (!vapidPublicKey) return res.status(503).json({ error: 'Push notifications not available.' });
+  res.json({ key: vapidPublicKey });
+});
+
+app.post('/api/push/subscribe', requireAuth, requireAppUser, async (req, res) => {
+  try {
+    const { endpoint, keys } = req.body;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ error: 'Invalid subscription.' });
+    }
+
+    await savePushSubscription({
+      userId: req.auth.userId,
+      endpoint,
+      p256dh: keys.p256dh,
+      auth: keys.auth
+    });
+
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.delete('/api/push/subscribe', requireAuth, async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (endpoint) {
+      await deletePushSubscription(endpoint);
+    }
+    res.status(204).end();
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.use(express.static(clientDistPath));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDistPath, 'index.html'));
@@ -1860,7 +1971,19 @@ process.on('uncaughtException', (error) => {
 });
 
 initDb()
-  .then(() => {
+  .then(async () => {
+    try {
+      const vapidKeys = await getOrCreateVapidKeys();
+      vapidPublicKey = vapidKeys.publicKey;
+      webpush.setVapidDetails(
+        `mailto:${process.env.VAPID_EMAIL || 'admin@example.com'}`,
+        vapidKeys.publicKey,
+        vapidKeys.privateKey
+      );
+    } catch (err) {
+      console.warn('Push notifications unavailable:', err.message);
+    }
+
     server.listen(port, () => {
       console.log(`Todo SaaS server listening on http://localhost:${port}`);
     });

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AccountProfileModal from './components/AccountProfileModal.vue';
 import AdminDashboard from './components/AdminDashboard.vue';
 import AuthPanel from './components/AuthPanel.vue';
+import ChatPanel from './components/ChatPanel.vue';
 import GroceryPanel from './components/GroceryPanel.vue';
 import ListSidebar from './components/ListSidebar.vue';
 import TaskPanel from './components/TaskPanel.vue';
@@ -48,6 +49,12 @@ const shoppingResetOpen = ref(false);
 const accountModalOpen = ref(false);
 const boardPanelRef = ref(null);
 const listPanelRef = ref(null);
+const chatOpen = ref(false);
+const chatMessages = ref([]);
+const chatUnread = ref(0);
+const chatHasMore = ref(false);
+const chatLoadingMore = ref(false);
+let pushSubscription = null;
 let socket;
 let reconnectTimer;
 let allowReconnect = true;
@@ -357,7 +364,9 @@ async function applyWorkspaceMembershipUpdate({ workspaces = [], preferredWorksp
   revokedWorkspaceId.value = 0;
   localStorage.setItem(WORKSPACE_KEY, String(workspaceId.value));
   await loadBootstrap();
+  await loadChatMessages();
   connectSocket();
+  registerPushNotifications();
   if (statusMessage) {
     lastEvent.value = statusMessage;
   }
@@ -430,6 +439,17 @@ function connectSocket() {
     }
 
     if (payload.type === 'event') {
+      if (payload.data.action === 'chat.message') {
+        const message = payload.data.details?.message;
+        if (message) {
+          chatMessages.value.push(message);
+          if (!chatOpen.value) {
+            chatUnread.value += 1;
+          }
+        }
+        return;
+      }
+
       lastEvent.value = `${payload.data.action} • ${new Date(payload.data.sentAt).toLocaleTimeString()}`;
       loadBootstrap().catch((error) => {
         errorMessage.value = error.message;
@@ -1010,6 +1030,103 @@ async function restoreSession() {
   }
 }
 
+function openChat() {
+  chatOpen.value = true;
+  chatUnread.value = 0;
+}
+
+function closeChat() {
+  chatOpen.value = false;
+}
+
+async function loadChatMessages() {
+  if (!workspaceId.value) return;
+  try {
+    const response = await request(`/api/workspaces/${workspaceId.value}/chat?limit=50`);
+    chatMessages.value = response.messages || [];
+    chatHasMore.value = (response.messages || []).length === 50;
+  } catch {
+    // silently fail — chat is non-critical
+  }
+}
+
+async function loadEarlierMessages() {
+  if (!workspaceId.value || chatLoadingMore.value || !chatHasMore.value) return;
+  const oldest = chatMessages.value[0];
+  if (!oldest) return;
+  chatLoadingMore.value = true;
+  try {
+    const response = await request(`/api/workspaces/${workspaceId.value}/chat?before=${oldest.id}&limit=50`);
+    const older = response.messages || [];
+    chatMessages.value = [...older, ...chatMessages.value];
+    chatHasMore.value = older.length === 50;
+  } catch {
+    // silently fail
+  } finally {
+    chatLoadingMore.value = false;
+  }
+}
+
+async function sendChatMessage({ text, listId }) {
+  if (!workspaceId.value || !text?.trim()) return;
+  try {
+    const response = await request(`/api/workspaces/${workspaceId.value}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ text: text.trim(), listId: listId || null })
+    });
+    // Message will arrive via WS broadcast; but add it immediately for the sender
+    const alreadyAdded = chatMessages.value.some((m) => m.id === response.message.id);
+    if (!alreadyAdded) {
+      chatMessages.value.push(response.message);
+    }
+  } catch (error) {
+    errorMessage.value = error.message;
+  }
+}
+
+async function registerPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const keyResponse = await request('/api/push/vapid-public-key').catch(() => null);
+    if (!keyResponse?.key) return;
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(keyResponse.key)
+    });
+
+    pushSubscription = sub;
+    await request('/api/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(sub.toJSON())
+    });
+  } catch {
+    // Push registration is optional — silently fail
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+// When workspace changes, reload chat history
+watch(workspaceId, (newId) => {
+  chatMessages.value = [];
+  chatUnread.value = 0;
+  chatHasMore.value = false;
+  if (newId) {
+    loadChatMessages();
+  }
+});
+
 onMounted(() => {
   handleOAuthRedirectResult();
   loadAuthProviders();
@@ -1255,5 +1372,22 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    <ChatPanel
+      v-if="isAuthenticated && hasWorkspace && !isSuperAdmin"
+      :open="chatOpen"
+      :messages="chatMessages"
+      :lists="lists"
+      :members="members"
+      :current-user="currentUser"
+      :unread-count="chatUnread"
+      :has-more="chatHasMore"
+      :loading-more="chatLoadingMore"
+      :pending="pending"
+      @open="openChat"
+      @close="closeChat"
+      @send="sendChatMessage"
+      @load-more="loadEarlierMessages"
+    />
   </main>
 </template>
