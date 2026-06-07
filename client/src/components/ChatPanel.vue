@@ -830,6 +830,12 @@ onBeforeUnmount(() => {
 }
 
 /* ─── Mobile ──────────────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .chat-fab {
+    display: none;
+  }
+}
+
 @media (max-width: 480px) {
   .chat-fab-wrap {
     bottom: 20px;

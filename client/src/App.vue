@@ -123,8 +123,10 @@ const heroStatus = computed(() => {
   return WORKSPACE_LOADING_LAST_EVENT;
 });
 
-function isMobileViewport() {
-  return window.matchMedia?.('(max-width: 720px)').matches ?? window.innerWidth <= 720;
+const mobileTab = ref('tasks');
+
+function isMobileNav() {
+  return window.matchMedia?.('(max-width: 1100px)').matches ?? window.innerWidth <= 1100;
 }
 
 function scrollToPanel(panelRef) {
@@ -135,14 +137,19 @@ function scrollToPanel(panelRef) {
 }
 
 function scrollToLists() {
-  if (!isMobileViewport()) return;
+  if (isMobileNav()) {
+    mobileTab.value = 'lists';
+    return;
+  }
   scrollToPanel(listPanelRef);
 }
 
 async function handleSelectList(listId) {
   activeListId.value = listId ?? null;
   await nextTick();
-  if (isMobileViewport()) {
+  if (isMobileNav()) {
+    mobileTab.value = 'tasks';
+  } else {
     scrollToPanel(boardPanelRef);
   }
 }
@@ -1263,7 +1270,8 @@ onBeforeUnmount(() => {
 
         <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
-        <section v-if="hasWorkspace" class="layout-grid three-up">
+        <section v-if="hasWorkspace" class="layout-grid three-up" :data-mobile-tab="mobileTab">
+          <div class="layout-anchor workspace-anchor">
           <WorkspaceSidebar
             :current-user="currentUser"
             :invites="invites"
@@ -1289,8 +1297,9 @@ onBeforeUnmount(() => {
             @select-workspace="switchWorkspace"
             @create-invite="createInvite"
           />
+          </div>
 
-          <div ref="boardPanelRef" class="layout-anchor">
+          <div ref="boardPanelRef" class="layout-anchor board-anchor">
             <TaskPanel
               v-if="activeList?.type !== 'grocery'"
               :active-list="activeList"
@@ -1319,7 +1328,7 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div ref="listPanelRef" class="layout-anchor">
+          <div ref="listPanelRef" class="layout-anchor list-anchor">
             <ListSidebar
               :current-list-id="activeListId || 0"
               :lists="lists"
@@ -1372,6 +1381,67 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+
+    <nav v-if="isAuthenticated && hasWorkspace && !isSuperAdmin" class="mobile-bottom-nav" aria-label="Main navigation">
+      <div class="mobile-bottom-nav-inner">
+        <button
+          class="mobile-nav-item"
+          :class="{ active: mobileTab === 'tasks' }"
+          aria-label="Tasks"
+          @click="mobileTab = 'tasks'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 11l3 3L22 4"/>
+            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+          </svg>
+          <span>Tasks</span>
+        </button>
+        <button
+          class="mobile-nav-item"
+          :class="{ active: mobileTab === 'lists' }"
+          aria-label="Lists"
+          @click="mobileTab = 'lists'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="8" y1="6" x2="21" y2="6"/>
+            <line x1="8" y1="12" x2="21" y2="12"/>
+            <line x1="8" y1="18" x2="21" y2="18"/>
+            <circle cx="3" cy="6" r="0.5" fill="currentColor"/>
+            <circle cx="3" cy="12" r="0.5" fill="currentColor"/>
+            <circle cx="3" cy="18" r="0.5" fill="currentColor"/>
+          </svg>
+          <span>Lists</span>
+        </button>
+        <button
+          class="mobile-nav-item"
+          :class="{ active: mobileTab === 'workspace' }"
+          aria-label="Team"
+          @click="mobileTab = 'workspace'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+            <path d="M16 3.13a4 4 0 010 7.75"/>
+          </svg>
+          <span>Team</span>
+        </button>
+        <button
+          class="mobile-nav-item"
+          :class="{ active: chatOpen }"
+          aria-label="Chat"
+          @click="chatOpen ? closeChat() : openChat()"
+        >
+          <span class="mobile-nav-icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+            </svg>
+            <span v-if="chatUnread > 0" class="mobile-nav-badge">{{ chatUnread > 99 ? '99+' : chatUnread }}</span>
+          </span>
+          <span>Chat</span>
+        </button>
+      </div>
+    </nav>
 
     <ChatPanel
       v-if="isAuthenticated && hasWorkspace && !isSuperAdmin"
