@@ -25,6 +25,8 @@ const errorLevelFilter = ref('all');
 const errorSourceFilter = ref('all');
 const errorSearch = ref('');
 
+const adminTab = ref('overview');
+
 const overview = computed(() => dashboard.value?.overview || {});
 const providers = computed(() => dashboard.value?.providers || {});
 const growth = computed(() => dashboard.value?.growth || []);
@@ -413,7 +415,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="admin-shell">
+  <section class="admin-shell" :data-admin-tab="adminTab">
     <section class="panel admin-hero">
       <div class="admin-hero-copy">
         <p class="eyebrow">Super Admin</p>
@@ -461,7 +463,7 @@ onMounted(() => {
       </section>
 
       <section class="admin-grid admin-grid-two-up">
-        <section class="panel admin-section">
+        <section class="panel admin-section admin-growth-section">
           <div class="admin-section-header">
             <div>
               <p class="eyebrow">Growth</p>
@@ -486,7 +488,7 @@ onMounted(() => {
           </div>
         </section>
 
-        <section class="panel admin-section">
+        <section class="panel admin-section admin-activity-section">
           <div class="admin-section-header">
             <div>
               <p class="eyebrow">Audit Trail</p>
@@ -538,7 +540,7 @@ onMounted(() => {
       </section>
 
       <section class="admin-grid admin-grid-two-up">
-        <section class="panel admin-section">
+        <section class="panel admin-section admin-workspace-section">
           <div class="admin-section-header">
             <div>
               <p class="eyebrow">Workspace Health</p>
@@ -568,7 +570,7 @@ onMounted(() => {
           <p v-else class="subtle">No workspaces available yet.</p>
         </section>
 
-        <section class="panel admin-section">
+        <section class="panel admin-section admin-error-section">
           <div class="admin-section-header">
             <div>
               <p class="eyebrow">Error Logs</p>
@@ -683,5 +685,62 @@ onMounted(() => {
         </div>
       </section>
     </template>
+
+    <nav class="mobile-bottom-nav" aria-label="Admin navigation">
+      <div class="mobile-bottom-nav-inner">
+        <button
+          class="mobile-nav-item"
+          :class="{ active: adminTab === 'overview' }"
+          aria-label="Overview"
+          @click="adminTab = 'overview'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7" rx="1"/>
+            <rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/>
+            <rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+          <span>Overview</span>
+        </button>
+        <button
+          class="mobile-nav-item"
+          :class="{ active: adminTab === 'activity' }"
+          aria-label="Activity"
+          @click="adminTab = 'activity'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <span>Activity</span>
+        </button>
+        <button
+          class="mobile-nav-item"
+          :class="{ active: adminTab === 'errors' }"
+          aria-label="Errors"
+          @click="adminTab = 'errors'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>Errors</span>
+        </button>
+        <button
+          class="mobile-nav-item"
+          :class="{ active: adminTab === 'users' }"
+          aria-label="Users"
+          @click="adminTab = 'users'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+            <path d="M16 3.13a4 4 0 010 7.75"/>
+          </svg>
+          <span>Users</span>
+        </button>
+      </div>
+    </nav>
   </section>
 </template>

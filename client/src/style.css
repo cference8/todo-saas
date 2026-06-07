@@ -2350,4 +2350,27 @@ textarea {
   .mobile-bottom-nav {
     display: block;
   }
+
+  /* Admin tab visibility */
+  [data-admin-tab="overview"] .admin-activity-section,
+  [data-admin-tab="overview"] .admin-workspace-section,
+  [data-admin-tab="overview"] .admin-error-section,
+  [data-admin-tab="overview"] .admin-user-section { display: none; }
+
+  [data-admin-tab="activity"] .admin-stat-grid,
+  [data-admin-tab="activity"] .admin-growth-section,
+  [data-admin-tab="activity"] .admin-workspace-section,
+  [data-admin-tab="activity"] .admin-error-section,
+  [data-admin-tab="activity"] .admin-user-section { display: none; }
+
+  [data-admin-tab="errors"] .admin-stat-grid,
+  [data-admin-tab="errors"] .admin-growth-section,
+  [data-admin-tab="errors"] .admin-activity-section,
+  [data-admin-tab="errors"] .admin-workspace-section,
+  [data-admin-tab="errors"] .admin-user-section { display: none; }
+
+  [data-admin-tab="users"] .admin-stat-grid,
+  [data-admin-tab="users"] .admin-growth-section,
+  [data-admin-tab="users"] .admin-activity-section,
+  [data-admin-tab="users"] .admin-error-section { display: none; }
 }
