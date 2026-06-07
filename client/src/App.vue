@@ -49,6 +49,7 @@ const shoppingResetOpen = ref(false);
 const accountModalOpen = ref(false);
 const boardPanelRef = ref(null);
 const listPanelRef = ref(null);
+const contentGridRef = ref(null);
 const chatOpen = ref(false);
 const chatMessages = ref([]);
 const chatUnread = ref(0);
@@ -125,6 +126,13 @@ const heroStatus = computed(() => {
 
 const mobileTab = ref('tasks');
 
+function setMobileTab(tab) {
+  mobileTab.value = tab;
+  nextTick(() => {
+    contentGridRef.value?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  });
+}
+
 function isMobileNav() {
   return window.matchMedia?.('(max-width: 1100px)').matches ?? window.innerWidth <= 1100;
 }
@@ -138,7 +146,7 @@ function scrollToPanel(panelRef) {
 
 function scrollToLists() {
   if (isMobileNav()) {
-    mobileTab.value = 'lists';
+    setMobileTab('lists');
     return;
   }
   scrollToPanel(listPanelRef);
@@ -148,7 +156,7 @@ async function handleSelectList(listId) {
   activeListId.value = listId ?? null;
   await nextTick();
   if (isMobileNav()) {
-    mobileTab.value = 'tasks';
+    setMobileTab('tasks');
   } else {
     scrollToPanel(boardPanelRef);
   }
@@ -1270,7 +1278,7 @@ onBeforeUnmount(() => {
 
         <p v-else-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
-        <section v-if="hasWorkspace" class="layout-grid three-up" :data-mobile-tab="mobileTab">
+        <section v-if="hasWorkspace" ref="contentGridRef" class="layout-grid three-up" :data-mobile-tab="mobileTab">
           <div class="layout-anchor workspace-anchor">
           <WorkspaceSidebar
             :current-user="currentUser"
@@ -1382,13 +1390,14 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
+    <Teleport to="body">
     <nav v-if="isAuthenticated && hasWorkspace && !isSuperAdmin" class="mobile-bottom-nav" aria-label="Main navigation">
       <div class="mobile-bottom-nav-inner">
         <button
           class="mobile-nav-item"
           :class="{ active: mobileTab === 'tasks' }"
           aria-label="Tasks"
-          @click="mobileTab = 'tasks'"
+          @click="setMobileTab('tasks')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M9 11l3 3L22 4"/>
@@ -1400,7 +1409,7 @@ onBeforeUnmount(() => {
           class="mobile-nav-item"
           :class="{ active: mobileTab === 'lists' }"
           aria-label="Lists"
-          @click="mobileTab = 'lists'"
+          @click="setMobileTab('lists')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="8" y1="6" x2="21" y2="6"/>
@@ -1416,7 +1425,7 @@ onBeforeUnmount(() => {
           class="mobile-nav-item"
           :class="{ active: mobileTab === 'workspace' }"
           aria-label="Team"
-          @click="mobileTab = 'workspace'"
+          @click="setMobileTab('workspace')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -1442,6 +1451,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </nav>
+    </Teleport>
 
     <ChatPanel
       v-if="isAuthenticated && hasWorkspace && !isSuperAdmin"

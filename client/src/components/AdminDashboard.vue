@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
 const props = defineProps({
   currentUser: {
@@ -26,6 +26,15 @@ const errorSourceFilter = ref('all');
 const errorSearch = ref('');
 
 const adminTab = ref('overview');
+
+const contentStartRef = ref(null);
+
+function setAdminTab(tab) {
+  adminTab.value = tab;
+  nextTick(() => {
+    contentStartRef.value?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  });
+}
 
 const overview = computed(() => dashboard.value?.overview || {});
 const providers = computed(() => dashboard.value?.providers || {});
@@ -445,6 +454,8 @@ onMounted(() => {
       </div>
     </section>
 
+    <div ref="contentStartRef" style="scroll-margin-top: 0"></div>
+
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
     <section v-if="loading && !dashboard" class="panel admin-loading-panel">
@@ -686,13 +697,14 @@ onMounted(() => {
       </section>
     </template>
 
+    <Teleport to="body">
     <nav class="mobile-bottom-nav" aria-label="Admin navigation">
       <div class="mobile-bottom-nav-inner">
         <button
           class="mobile-nav-item"
           :class="{ active: adminTab === 'overview' }"
           aria-label="Overview"
-          @click="adminTab = 'overview'"
+          @click="setAdminTab('overview')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="3" width="7" height="7" rx="1"/>
@@ -706,7 +718,7 @@ onMounted(() => {
           class="mobile-nav-item"
           :class="{ active: adminTab === 'activity' }"
           aria-label="Activity"
-          @click="adminTab = 'activity'"
+          @click="setAdminTab('activity')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -717,7 +729,7 @@ onMounted(() => {
           class="mobile-nav-item"
           :class="{ active: adminTab === 'errors' }"
           aria-label="Errors"
-          @click="adminTab = 'errors'"
+          @click="setAdminTab('errors')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
@@ -730,7 +742,7 @@ onMounted(() => {
           class="mobile-nav-item"
           :class="{ active: adminTab === 'users' }"
           aria-label="Users"
-          @click="adminTab = 'users'"
+          @click="setAdminTab('users')"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
@@ -742,5 +754,6 @@ onMounted(() => {
         </button>
       </div>
     </nav>
+    </Teleport>
   </section>
 </template>
